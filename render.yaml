@@ -1,0 +1,22 @@
+# Render 블루프린트 (무료 요금제): GitHub 저장소를 연결하면 이 설정대로 배포됩니다.
+# 무료 요금제는 영구 디스크가 없어, 서버가 잠들거나 재시작되면 게임 기록이 사라집니다.
+# 기록을 보존하려면 plan을 starter로 바꾸고 아래 disk 주석을 해제하세요.
+services:
+  - type: web
+    name: world2050
+    runtime: docker
+    plan: free
+    region: singapore
+    numInstances: 1      # 반드시 1대 (여러 대로 늘리면 방 상태가 나뉩니다)
+    healthCheckPath: /api/health
+    envVars:
+      - key: TEACHER_PASSWORD
+        sync: false      # 배포할 때 Render 화면에서 직접 입력
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATA_DIR
+        value: /tmp/world2050-data
+    # disk:
+    #   name: world2050-data
+    #   mountPath: /data
+    #   sizeGB: 1

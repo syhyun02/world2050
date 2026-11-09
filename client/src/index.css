@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --color-ink-950: #060d1c;
+  --color-ink-900: #0a1428;
+  --color-ink-800: #0f1d38;
+  --color-ink-700: #16294b;
+  --color-ink-600: #1f3761;
+  --color-ink-500: #2c4a7c;
+  --color-line: #24406e;
+  --color-sky-glow: #38bdf8;
+}
+
+html, body, #root { height: 100%; }
+html { background: #060d1c; }
+body {
+  background: radial-gradient(1200px 600px at 50% -10%, #12284f 0%, #0a1428 55%, #060d1c 100%) fixed;
+  color: #e6eefc;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+input, textarea, select { font-family: inherit; }
+:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+
+.panel { background: color-mix(in oklab, #0f1d38 88%, transparent); border: 1px solid var(--color-line); border-radius: 14px; }
+.grid-bg { background-image: linear-gradient(#1b335c33 1px, transparent 1px), linear-gradient(90deg, #1b335c33 1px, transparent 1px); background-size: 40px 40px; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+@keyframes pop { 0% { transform: scale(0.96); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.anim-pop { animation: pop 0.25s ease-out; }
+@keyframes flash { 0% { background-color: #38bdf855; } 100% { background-color: transparent; } }
+.anim-flash { animation: flash 1.2s ease-out; }
+@keyframes rise { 0% { transform: translateY(8px); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-28px); opacity: 0; } }
+.anim-rise { animation: rise 2.4s ease-out forwards; }
+@keyframes breaking { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.anim-breaking { animation: breaking 1.1s ease-in-out 4; }
+@keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+.anim-ticker { animation: ticker 60s linear infinite; }
+@keyframes ring { 0% { box-shadow: 0 0 0 0 var(--ring, #38bdf8aa); } 100% { box-shadow: 0 0 0 36px transparent; } }
+.anim-ring { animation: ring 1.4s ease-out 2; }
+@keyframes pulse-dot { 0%, 100% { r: 5; opacity: 1; } 50% { r: 9; opacity: 0.4; } }
+.anim-dot { animation: pulse-dot 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* 인쇄(보고서 PDF 저장)용 */
+.print-only { display: none; }
+@media print {
+  @page { size: A4; margin: 14mm; }
+  html, body, #root { height: auto; }
+  html, body { background: #fff !important; color: #111 !important; }
+  .no-print { display: none !important; }
+  .print-only { display: block; }
+  .report { color: #111 !important; }
+  .report * { color: #111 !important; border-color: #999 !important; background: transparent !important; }
+  .report section { break-inside: avoid; }
+  .page-break { break-after: page; }
+  .panel { border: none !important; background: transparent !important; padding: 0 !important; }
+}
