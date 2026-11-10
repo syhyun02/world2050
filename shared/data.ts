@@ -53,7 +53,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '기술력 · 자본 · 연구 능력', weakness: '에너지 수입 의존',
     goal: '안정적인 에너지 공급망 확보', topics: '기술 격차, 에너지 안보',
     perk: '첨단 기술: 「생산 늘리기」를 해도 환경이 나빠지지 않음',
-    stock: r(40, 10, 10, 8), prod: r(18, 8, 8, 6), need: { food: 8, water: 8, energy: 12 },
+    stock: r(30, 2, 4, 6), prod: r(14, 8, 8, 6), need: { food: 8, water: 8, energy: 12 },
     env: 55, trust: 55, growth: 0, envDrift: -1, map: { x: 215, y: 150 },
   },
   SOL: {
@@ -62,7 +62,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '풍부한 에너지 자원', weakness: '물 부족',
     goal: '안정적인 수자원 확보', topics: '자원 외교, 자원의 저주',
     perk: '에너지 부국: 에너지가 크게 남지만 물이 모자람',
-    stock: r(26, 10, 10, 24), prod: r(12, 8, 4, 24), need: { food: 8, water: 10, energy: 8 },
+    stock: r(20, 2, 8, 8), prod: r(9, 8, 4, 21), need: { food: 8, water: 10, energy: 8 },
     env: 45, trust: 50, growth: 0, envDrift: -2, map: { x: 520, y: 330 },
   },
   GRN: {
@@ -71,7 +71,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '농업 생산력', weakness: '기후변화에 따른 식량 생산 불안정',
     goal: '농업기술과 기후 대응 지원 확보', topics: '식량 안보, 지속가능한 농업',
     perk: '세계의 곡창: 식량이 크게 남지만 에너지가 모자람',
-    stock: r(22, 22, 12, 10), prod: r(10, 22, 12, 4), need: { food: 8, water: 8, energy: 10 },
+    stock: r(18, 2, 4, 6), prod: r(8, 17, 8, 4), need: { food: 8, water: 8, energy: 10 },
     env: 70, trust: 55, growth: 0, envDrift: 0, map: { x: 470, y: 160 },
   },
   OCE: {
@@ -80,7 +80,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '해양자원 · 국제 해상 교역', weakness: '해수면 상승과 자연재해',
     goal: '기후 적응 지원과 국가 생존', topics: '기후정의, 인도적 지원',
     perk: '해상 교역 허브: 거래가 성사될 때마다 돈 +1 (라운드당 최대 +4)',
-    stock: r(24, 10, 20, 10), prod: r(12, 4, 20, 8), need: { food: 10, water: 8, energy: 8 },
+    stock: r(18, 7, 3, 1), prod: r(9, 4, 12, 8), need: { food: 10, water: 8, energy: 8 },
     env: 70, trust: 60, growth: 0, envDrift: 0, map: { x: 800, y: 370 },
   },
   IND: {
@@ -89,7 +89,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '제조업 · 산업 생산력', weakness: '높은 탄소배출량과 에너지 소비',
     goal: '산업 성장과 탄소 감축의 균형', topics: '탄소중립, 환경 협약',
     perk: '제조 강국: 「생산 늘리기」 효과가 +3 (다른 나라는 +2)',
-    stock: r(34, 10, 10, 10), prod: r(15, 10, 8, 5), need: { food: 10, water: 8, energy: 12 },
+    stock: r(26, 2, 5, 4), prod: r(11, 10, 5, 8), need: { food: 10, water: 8, energy: 12 },
     env: 30, trust: 50, growth: 0, envDrift: -4, map: { x: 770, y: 150 },
   },
   NOV: {
@@ -98,7 +98,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '인적자원 · 성장 잠재력', weakness: '부족한 자본과 사회기반시설',
     goal: '개발 협력과 기반시설 확충', topics: '국제 원조, 개발 격차, 교육 불평등',
     perk: '성장 잠재력: 라운드가 지날 때마다 버는 돈이 +2씩 늘어남 (처음엔 가난하지만 갈수록 부유해짐)',
-    stock: r(12, 10, 12, 10), prod: r(5, 4, 14, 8), need: { food: 10, water: 8, energy: 8 },
+    stock: r(10, 7, 3, 1), prod: r(4, 4, 10, 8), need: { food: 10, water: 8, energy: 8 },
     env: 60, trust: 55, growth: 2, envDrift: 0, map: { x: 250, y: 370 },
   },
 };
@@ -154,16 +154,16 @@ export const ROUNDS: Record<number, RoundDef> = {
     mission: '부족한 자원을 다른 나라와 거래해서 채워 보세요. 못 채우면 목숨을 잃습니다.',
     prodMult: { water: 0.6, food: 0.8 },
     learn: ['물 부족과 수자원 갈등', '식량 안보', '국가 간 상호의존성'],
-    project: { id: 'water', name: '국제 물 협력 기금', desc: '여러 나라가 돈을 모아 물 시설을 함께 짓습니다.', cost: 4, need: 4, success: '모든 나라의 물 생산 +2 (계속)' },
+    project: { id: 'water', name: '국제 물 협력 기금', desc: '여러 나라가 돈을 모아 물 시설을 함께 짓습니다.', cost: 4, need: 4, success: '모든 나라의 물 생산 +1 (계속)' },
   },
   2: {
     n: 2, title: '자원 확보 경쟁', crisis: '세계 에너지 위기',
     headline: '[속보] 에너지 수출 제한 확산… 국제 에너지 가격 급등',
-    body: '이번 라운드 모든 나라의 에너지 생산이 35% 줄었습니다. 에너지를 가진 나라와 필요한 나라의 협상이 중요해졌습니다. (게임 속 가상 사건)',
+    body: '이번 라운드 모든 나라의 에너지 생산이 20% 줄었습니다. 에너지를 가진 나라와 필요한 나라의 협상이 중요해졌습니다. (게임 속 가상 사건)',
     mission: '에너지가 남는 나라를 찾아 협상하세요.',
-    prodMult: { energy: 0.65 },
+    prodMult: { energy: 0.8 },
     learn: ['에너지 안보', '무역과 공급망', '자원 외교'],
-    project: { id: 'energy', name: '재생에너지 공동 연구', desc: '여러 나라가 돈을 모아 깨끗한 에너지를 함께 개발합니다.', cost: 5, need: 4, success: '모든 나라의 에너지 생산 +2, 환경 +3' },
+    project: { id: 'energy', name: '재생에너지 공동 연구', desc: '여러 나라가 돈을 모아 깨끗한 에너지를 함께 개발합니다.', cost: 5, need: 4, success: '모든 나라의 에너지 생산 +1, 환경 +3' },
   },
   3: {
     n: 3, title: '국제 갈등', crisis: '접경 지역의 수자원 분쟁',

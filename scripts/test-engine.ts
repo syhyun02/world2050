@@ -63,7 +63,7 @@ test('공동 대응: 참여 1회, 필요한 나라 수를 채워야 성공', () 
   for (const id of ['ARC', 'SOL', 'GRN', 'IND'] as CountryId[]) run(r, 'joinProject', id);
   const e = r.countries.NOV.prod.energy;
   now += 1000; run(r, 'endRound', 'T');
-  assert.equal(r.projectResults.energy.success, true); assert.equal(r.countries.NOV.prod.energy, e + 2);
+  assert.equal(r.projectResults.energy.success, true); assert.equal(r.countries.NOV.prod.energy, e + 1);
 });
 test('거래: 상호 승인, 원자적 처리, 중복 승인 방지, 자원 보존', () => {
   const r = mk(); run(r, 'start', 'T');
@@ -171,14 +171,14 @@ test('노바리아 성장: 라운드마다 수입 +2', () => {
 });
 
 // ── 전체 플레이 시뮬레이션 ──
-function play(mode: 'solo' | 'mixed' | 'coop'): Room {
+function play(mode: 'solo' | 'mixed' | 'trade' | 'coop'): Room {
   const r = mk(); now += 1000; run(r, 'start', 'T');
   const tr = (from: CountryId, to: CountryId, give: object, take: object = {}) => {
     try { run(r, 'propose', from, { to, give, take }); run(r, 'respond', to, { id: r.proposals.at(-1)!.id, action: 'accept' }); } catch (e) { if (!(e instanceof GameError)) throw e; }
   };
   const tryRun = (name: string, c: CountryId, args: Record<string, unknown> = {}) => { try { run(r, name, c, args); } catch (e) { if (!(e instanceof GameError)) throw e; } };
   for (let rd = 1; rd <= 5; rd++) {
-    if (mode === 'coop') {
+    if (mode === 'coop' || mode === 'trade') {
       // 부족분을 남는 나라에서 사 오는 단순한 협력 전략
       for (const k of ['energy', 'water', 'food'] as const) {
         for (const id of COUNTRY_IDS) {
@@ -192,9 +192,9 @@ function play(mode: 'solo' | 'mixed' | 'coop'): Room {
           }
         }
       }
-      if (r.project) for (const id of aliveIds(r)) tryRun('joinProject', id);
+      if (r.project && mode === 'coop') for (const id of aliveIds(r)) tryRun('joinProject', id);
       if (r.dispute) { run(r, 'stance', 'GRN', { stance: 'negotiate' }); run(r, 'stance', 'SOL', { stance: 'mediate' }); tryRun('mediate', 'OCE'); tryRun('mediate', 'NOV'); }
-      if (rd === 5) for (const id of aliveIds(r)) for (const cl of ['climate', 'coop', 'peace', 'support', 'sdg']) run(r, 'treatyVote', id, { clause: cl, yes: true });
+      if (rd === 5 && mode === 'coop') for (const id of aliveIds(r)) for (const cl of ['climate', 'coop', 'peace', 'support', 'sdg']) run(r, 'treatyVote', id, { clause: cl, yes: true });
       for (const id of aliveIds(r)) tryRun('policy', id, { id: 'green' });
     } else if (mode === 'mixed') {
       // 현실적인 학급: 에너지만 일부 거래, 공동 대응은 절반만 참여, 협약은 일부 반대
@@ -216,13 +216,14 @@ function play(mode: 'solo' | 'mixed' | 'coop'): Room {
   }
   return r;
 }
-for (const mode of ['solo', 'mixed', 'coop'] as const) {
+for (const mode of ['solo', 'mixed', 'trade', 'coop'] as const) {
   const r = play(mode); const res = r.results!;
-  console.log(`\n[${mode === 'solo' ? '각자도생' : mode === 'mixed' ? '선택적 거래(경쟁)' : '모두 거래'} 시나리오] 살아남은 나라 ${res.world.survivors}/6 · 순위: ${res.ranking.join(' > ')}`);
+  console.log(`\n[${mode === 'solo' ? '각자도생' : mode === 'mixed' ? '선택적 거래(경쟁)' : mode === 'trade' ? '모두 거래하지만 공동 대응은 불참' : '모두 거래 + 공동 대응·협약 참여'} 시나리오] 살아남은 나라 ${res.world.survivors}/6 · 순위: ${res.ranking.join(' > ')}`);
   for (const id of res.ranking) { const c = r.countries[id], s = res.countries[id]; console.log(`  ${s.rank}위 ${id} ${'♥'.repeat(c.lives) || '멸망(R' + c.diedRound + ')'} 점수 ${s.score} 환경 ${c.env} 신뢰 ${c.trust} 돈 ${c.stock.eco} · ${diagnose(publicView(r), id).map((f) => f.title).join(' / ')}`); }
   if (mode === 'solo') assert.ok(res.world.survivors <= 3, '거래 없이는 여러 나라가 멸망해야 함');
-  if (mode === 'coop') assert.equal(res.world.survivors, 6, '모두 거래하면 전원 생존이 가능해야 함');
+  if (mode === 'trade') assert.ok(res.world.survivors <= 5, '거래만으로는 자원이 조금 모자라 누군가는 멸망해야 함');
+  if (mode === 'coop') assert.ok(res.world.survivors >= 5, '공동 대응까지 협력하면 대부분 살아남을 수 있어야 함');
   assert.equal(calcPeace(r).value, r.peace); assert.deepEqual(res.ranking, ranking(r));
   for (const id of COUNTRY_IDS) assert.ok(diagnose(publicView(r), id).length > 0);
 }
-console.log(`\n모든 테스트 통과 (${n}개 + 시뮬레이션 3종)`);
+console.log(`\n모든 테스트 통과 (${n}개 + 시뮬레이션 4종)`);

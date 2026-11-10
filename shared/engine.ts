@@ -345,8 +345,8 @@ function resolveProject(room: Room, now: number) {
   }
   const who = pr.joined.map(cname).join(', ') || '없음';
   if (pr.success) {
-    if (pr.id === 'water') for (const id of aliveIds(room)) room.countries[id].prod.water += 2;
-    if (pr.id === 'energy') for (const id of aliveIds(room)) { room.countries[id].prod.energy += 2; idx(room.countries[id], 'env', 3); }
+    if (pr.id === 'water') for (const id of aliveIds(room)) room.countries[id].prod.water += 1;
+    if (pr.id === 'energy') for (const id of aliveIds(room)) { room.countries[id].prod.energy += 1; idx(room.countries[id], 'env', 3); }
     addNews(room, now, `${def.name} 성공!`, `${def.success}. 참여국: ${who}`, 'good');
     addAgreement(room, def.name, pr.joined, `${pr.joined.length}개국 참여 — ${def.success}`);
   } else {
