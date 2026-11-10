@@ -8,7 +8,7 @@
 import { QUIZZES } from './content';
 import {
   CLAUSES, COUNTRIES, COUNTRY_IDS, DISPUTE_PARTIES, POLICIES, RES, RES_INFO, ROUNDS,
-  RELIEF_AMOUNT, START_LIVES, investGain, policyCost, TEACHER_EVENTS, TOTAL_ROUNDS, TREATY_RULES, VITALS, fmtBundle,
+  EXTRA_CARD_COST, RELIEF_AMOUNT, START_LIVES, investGain, policyCost, TEACHER_EVENTS, TOTAL_ROUNDS, TREATY_RULES, VITALS, fmtBundle,
 } from './data';
 import {
   GameError, type CountryId, type CountryState, type Ctx, type LogEntry, type MeInfo, type News,
@@ -26,7 +26,7 @@ function newCountry(id: CountryId): CountryState {
   const d = COUNTRIES[id];
   return {
     id, stock: { ...d.stock }, prod: { ...d.prod }, need: { ...d.need },
-    lives: START_LIVES, diedRound: null, reliefDone: false, env: d.env, trust: d.trust, policy: null, invested: [],
+    lives: START_LIVES, diedRound: null, reliefDone: false, env: d.env, trust: d.trust, policy: null, extra: null, impact: null, invested: [],
     shortages: {}, trades: 0, roundTrust: { trade: 0, aid: 0 }, hubBonus: 0, quizBonus: [], delegate: null,
     history: [{ round: 0, stock: { ...d.stock }, lives: START_LIVES, env: d.env, trust: d.trust, shortages: [] }],
   };
@@ -36,7 +36,7 @@ export function newRoom(code: string, className: string, durationSec: number, jo
   const countries = {} as Record<CountryId, CountryState>;
   for (const id of COUNTRY_IDS) countries[id] = newCountry(id);
   const room: Room = {
-    v: 5, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
+    v: 6, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
     countries, players: {}, proposals: [], agreements: [], recurring: [], news: [], log: [],
     project: null, projectResults: {}, dispute: null, treaty: null,
     peace: 0, peaceHistory: [], severity: 1, results: null, quizStats: {}, seq: 0,
@@ -99,9 +99,14 @@ export function envEffort(c: CountryState): number {
   return clamp(50 + (c.env - COUNTRIES[c.id].env) * 2);
 }
 
-/** 나라 점수 (동점일 때 순위를 가르는 값) = 신뢰도 40% + 환경 노력 40% + 돈(최대 20점) */
+/** 신뢰 노력 점수(0~100): 처음보다 신뢰도를 얼마나 올렸는가 */
+export function trustEffort(c: CountryState): number {
+  return clamp(50 + (c.trust - COUNTRIES[c.id].trust) * 2);
+}
+
+/** 나라 점수 (동점일 때 순위를 가르는 값) = 신뢰 노력 45% + 환경 노력 45% + 돈(5당 1점, 최대 10점). 모든 나라가 55점에서 출발 */
 export function countryScore(c: CountryState): number {
-  return Math.round(c.trust * 0.4 + envEffort(c) * 0.4 + Math.min(20, c.stock.eco / 3));
+  return Math.round(trustEffort(c) * 0.45 + envEffort(c) * 0.45 + Math.min(10, c.stock.eco / 5));
 }
 
 /** 순위: 살아남은 나라가 먼저, 늦게 멸망할수록 위, 목숨이 많을수록 위, 나라 점수가 높을수록 위 */
@@ -232,12 +237,30 @@ function beginRound(room: Room, n: number, now: number) {
   for (const id of COUNTRY_IDS) {
     const c = room.countries[id];
     c.policy = null;
+    c.extra = null;
+    c.impact = null;
     c.reliefDone = false;
     c.roundTrust = { trade: 0, aid: 0 };
     c.hubBonus = 0;
     if (c.diedRound !== null) continue;
     if (n > 1) c.prod.eco += COUNTRIES[id].growth;
-    for (const k of RES) c.stock[k] += Math.round(c.prod[k] * (def.prodMult[k] ?? 1));
+    // 사건의 영향은 나라마다 다르게 적용하고, 무엇이 얼마나 달라졌는지 화면에 보여 줄 문장을 남김
+    const imp = def.impact?.[id];
+    const lines: string[] = [];
+    for (const k of RES) {
+      const mult = imp?.mult?.[k] ?? def.prodMult[k] ?? 1;
+      const got = Math.round(c.prod[k] * mult);
+      c.stock[k] += got;
+      if (mult !== 1) lines.push(`${RES_INFO[k].name} 생산 ${mult < 1 ? '−' : '+'}${Math.round(Math.abs(1 - mult) * 100)}% (이번 라운드에는 ${got}만 생산, 평소 ${c.prod[k]})`);
+    }
+    for (const k of RES) {
+      const v = imp?.add?.[k];
+      if (!v) continue;
+      const before = c.stock[k];
+      gain(c, k, v);
+      lines.push(`${RES_INFO[k].name} ${v > 0 ? '+' : '−'}${Math.abs(c.stock[k] - before)}`);
+    }
+    if (imp || lines.length) c.impact = { lines, why: imp?.why ?? '' };
   }
   addNews(room, now, def.headline, def.body, n === 5 ? 'info' : 'bad');
   addLog(room, now, 'event', `ROUND ${n} 시작 — ${def.crisis}`);
@@ -272,10 +295,13 @@ function applyDisaster(room: Room, now: number) {
   const hit = (id: CountryId, d: { food: number; water: number; eco: number }) => {
     if (!isAlive(room, id)) return;
     const c = room.countries[id];
+    const before = { ...c.stock };
     gain(c, 'food', -d.food * sev); gain(c, 'water', -d.water * sev); gain(c, 'eco', -d.eco * sev);
+    const lines = (['food', 'water', 'eco'] as const).filter((k) => before[k] !== c.stock[k]).map((k) => `${RES_INFO[k].name} −${before[k] - c.stock[k]}`);
+    c.impact = { lines, why: `태풍과 홍수가 직접 덮쳤습니다.${sev > 1 ? ' 세계 환경이 나빠 피해가 30% 커졌습니다.' : sev < 1 ? ' 세계가 환경을 지킨 덕분에 피해가 20% 줄었습니다.' : ''} 다른 나라의 구호를 받을 수 있습니다.` };
     addLog(room, now, 'event', `${cname(id)} 재난 피해 (피해 배율 ×${sev})`, id);
   };
-  hit('OCE', { food: 5, water: 6, eco: 8 });
+  hit('OCE', { food: 4, water: 5, eco: 6 });
   hit('NOV', { food: 4, water: 3, eco: 4 });
   const txt = sev > 1 ? '세계 환경 지수가 낮아 재난 피해가 30% 커졌습니다.' : sev < 1 ? '각국이 환경을 지킨 덕분에 재난 피해가 20% 줄었습니다.' : '세계 환경 지수가 보통 수준이어서 피해 규모는 예측대로였습니다.';
   addNews(room, now, '재난 피해 규모 발표', txt, sev > 1 ? 'bad' : 'info');
@@ -589,26 +615,27 @@ export const commands: Record<string, Cmd> = {
     requireRunning(room, ctx.now);
     const c = requireActive(room, ctx);
     const def = POLICIES.find((x) => x.id === a.id) ?? fail('알 수 없는 정책 카드입니다.');
-    need(!c.policy, '이번 라운드의 정책 카드는 이미 골랐습니다. (라운드마다 1장)');
-    const cost = policyCost(c.id, def);
+    const isExtra = !!c.policy;
+    need(!c.extra, '이번 라운드에는 정책 카드를 더 고를 수 없습니다. (기본 1장 + 추가 1장까지)');
+    const cost = policyCost(c.id, def) + (isExtra ? EXTRA_CARD_COST : 0);
     need(c.stock.eco >= cost, `돈이 부족합니다. (${cost} 필요)`);
     let pick: Vital | undefined;
     if (def.pick) pick = def.pick.find((k) => k === a.pick) ?? fail('대상 자원을 고르세요.');
     if (def.id === 'invest') { need(!c.invested.includes(pick!), `${RES_INFO[pick!].name}에는 이미 「생산 늘리기」를 썼습니다. (자원마다 한 번)`); c.invested.push(pick!); }
     c.stock.eco -= cost;
-    c.policy = { id: def.id, pick };
+    if (isExtra) c.extra = { id: def.id, pick }; else c.policy = { id: def.id, pick };
     let result = '';
     switch (def.id) {
       case 'invest': {
         const v = investGain(c.id);
         c.prod[pick!] += v;
-        idx(c, 'env', -3);
-        result = `${RES_INFO[pick!].name} 생산 +${v}, 환경 −3`; break;
+        if (c.id !== 'IND') idx(c, 'env', -3);
+        result = `${RES_INFO[pick!].name} 생산 +${v}${c.id === 'IND' ? '' : ', 환경 −3'}`; break;
       }
       case 'green': idx(c, 'env', 8); result = '환경 +8'; break;
       case 'emergency': c.stock[pick!] += 2; result = `${RES_INFO[pick!].name} +2`; break;
     }
-    addLog(room, ctx.now, 'action', `정책 「${def.name}」${pick ? `(${RES_INFO[pick].name})` : ''} — ${result}`, c.id);
+    addLog(room, ctx.now, 'action', `${isExtra ? `추가 정책(돈 +${EXTRA_CARD_COST})` : '정책'} 「${def.name}」${pick ? `(${RES_INFO[pick].name})` : ''} — ${result}`, c.id);
     refreshPeace(room);
   },
 

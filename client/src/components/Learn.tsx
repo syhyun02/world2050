@@ -1,7 +1,7 @@
 // 교육 콘텐츠 화면: 오늘의 세계 시민 지식 패널, 퀴즈, 규칙 안내
 import { useEffect, useState } from 'react';
 import { cardsFor, QUIZZES, type Card } from '../../../shared/content';
-import { CLAUSES, POLICIES, RELIEF_AMOUNT, ROUNDS, START_LIVES, TREATY_RULES } from '../../../shared/data';
+import { CLAUSES, EXTRA_CARD_COST, POLICIES, RELIEF_AMOUNT, ROUNDS, START_LIVES, TREATY_RULES } from '../../../shared/data';
 import type { CountryId, MeInfo, PublicRoom } from '../../../shared/types';
 import { Badge, Btn, cx, Panel } from '../lib/ui';
 
@@ -117,7 +117,7 @@ export function Rules() {
       <H>🔁 한 라운드에 할 일 (총 5라운드)</H>
       <ol className="list-decimal pl-5 space-y-1 text-slate-300">
         <li><b className="text-white">부족한 자원 채우기</b> — 「협상」에서 다른 나라와 거래합니다. 팔지 말지, 얼마에 팔지는 각 나라의 자유입니다.</li>
-        <li><b className="text-white">정책 카드 1장 고르기</b> — 세 장 중 한 장만.</li>
+        <li><b className="text-white">정책 카드 1장 고르기</b> — 세 장 중 한 장. 돈 {EXTRA_CARD_COST}을 더 내면 한 장을 더 고를 수 있습니다.</li>
         <li><b className="text-white">사건 카드에 답하기</b> — 그 라운드의 세계 사건에 참여할지 정합니다.</li>
       </ol>
 
@@ -133,6 +133,9 @@ export function Rules() {
         <li>자원이 모자란 나라에 대가 없이 주면 3개당 신뢰도 +1 (라운드당 최대 +6).</li>
       </ul>
 
+      <H>📌 사건의 영향은 나라마다 다릅니다</H>
+      <p className="text-slate-300">같은 사건이라도 나라의 처지에 따라 피해가 크거나 작고, 이득을 보는 나라도 있습니다. 「우리 나라」 화면 맨 위에 이번 사건이 우리 나라에 준 영향이 숫자로 나옵니다.</p>
+
       <H>🌐 사건 카드</H>
       <ul className="list-disc pl-5 space-y-0.5 text-slate-300">
         {[1, 2, 4].map((n) => { const p = ROUNDS[n].project!; return <li key={n}><b className="text-white">R{n} {p.name}</b> — 돈 {p.cost}을 내고 참여(신뢰도 +{n === 4 ? 4 : 3}). {p.need}개국 이상 참여하면 {p.success}.</li>; })}
@@ -142,7 +145,7 @@ export function Rules() {
       </ul>
 
       <H>📊 나라 점수 (목숨이 같을 때 순위를 가름)</H>
-      <p className="text-slate-300">신뢰도 40% + 환경 노력 40% + 돈(3당 1점, 최대 20점). 환경 노력은 처음보다 환경을 얼마나 올렸는지로 매기므로(그대로면 50점, 1 올릴 때마다 +2점), 출발이 낮은 나라도 불리하지 않습니다. 살아남는 것이 먼저이고, 점수는 그다음입니다.</p>
+      <p className="text-slate-300">신뢰 노력 45% + 환경 노력 45% + 돈(5당 1점, 최대 10점). 신뢰와 환경은 수치 자체가 아니라 <b className="text-white">처음보다 얼마나 올렸는지</b>로 매깁니다(그대로면 50점, 1 올릴 때마다 +2점). 그래서 모든 나라가 같은 점수에서 출발합니다. 살아남는 것이 먼저이고, 점수는 그다음입니다.</p>
 
       <p className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/40 text-amber-100 text-xs p-3">
         ※ 순위와 점수는 학습을 위한 게임 지표입니다. 실제 국제사회의 복잡한 현실을 정확하게 수치로 나타낸 것이 아닙니다. 나라와 사건은 모두 가상이며, "세계 시민 지식" 카드와 결과 분석의 🌍 설명만 실제 사실에 바탕을 둡니다.

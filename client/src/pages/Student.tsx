@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   CLAUSES, COUNTRIES, COUNTRY_IDS, IDX_INFO, POLICIES, RELIEF_AMOUNT, RES, RES_INFO, ROUNDS, STANCES,
-  TREATY_RULES, VITALS, balanceOf, investGain, policyCost,
+  EXTRA_CARD_COST, TREATY_RULES, VITALS, balanceOf, investGain, policyCost,
 } from '../../../shared/data';
 import { aliveIds, countryScore, lacking, projectInfo, ranking, tallyTreaty } from '../../../shared/engine';
 import { diagnose } from '../../../shared/lessons';
@@ -205,6 +205,13 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
         <>
           <Panel title={`🚨 ROUND ${def.n}. ${def.crisis}`}>
             <p className="text-sm text-slate-200">{def.body}</p>
+            {c.impact && (
+              <div className="mt-2.5 rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2">
+                <div className="text-xs font-bold text-amber-200">📌 이 사건이 우리 나라에 준 영향</div>
+                {c.impact.lines.length > 0 && <ul className="mt-1 text-sm font-semibold space-y-0.5">{c.impact.lines.map((l, i) => <li key={i}>{l.includes('+') && !l.includes('−') ? '▲' : '▼'} {l}</li>)}</ul>}
+                {c.impact.why && <p className="text-xs text-slate-200 mt-1">{c.impact.why}</p>}
+              </div>
+            )}
           </Panel>
 
           <Panel title="✅ 이번 라운드 할 일">
@@ -252,7 +259,7 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
               <Bar value={c[k]} color={k === 'env' ? '#34d399' : '#38bdf8'} />
             </div>
           ))}
-          <p className="text-[11px] text-slate-400">목숨이 같으면 나라 점수로 순위를 정합니다. 지금 <b className="text-slate-200">{countryScore(c)}점</b> (신뢰도 40% + 환경을 처음보다 올린 정도 40% + 돈 최대 20점)</p>
+          <p className="text-[11px] text-slate-400">목숨이 같으면 나라 점수로 순위를 정합니다. 지금 <b className="text-slate-200">{countryScore(c)}점</b> (신뢰도를 올린 정도 45% + 환경을 올린 정도 45% + 돈 최대 10점)</p>
         </div>
       </Panel>}
 
@@ -291,51 +298,61 @@ function PolicyPanel({ state, me, cmd, canAct }: P) {
   const c = state.countries[me.country];
   const { run, busy } = useAction(cmd);
   const [picks, setPicks] = useState<Record<string, Vital>>({});
-  if (c.policy) {
-    const def = POLICIES.find((x) => x.id === c.policy!.id)!;
-    return (
-      <Panel title="🃏 정책 카드" right={<Badge tone="good">✓ 이번 라운드 선택 완료</Badge>}>
-        <p className="text-sm"><b>{def.icon} {def.name}{c.policy.pick ? ` (${RES_INFO[c.policy.pick].name})` : ''}</b> — {def.good}</p>
-        <p className="text-xs text-slate-400 mt-1">다음 라운드에 다시 한 장을 고를 수 있습니다.</p>
-      </Panel>
-    );
-  }
+  const [more, setMore] = useState(false);
+  useEffect(() => { setMore(false); }, [state.round]);
+  const isExtra = !!c.policy;
+  const label = (x: { id: string; pick?: Vital }) => { const def = POLICIES.find((d) => d.id === x.id)!; return `${def.icon} ${def.name}${x.pick ? ` (${RES_INFO[x.pick].name})` : ''}`; };
   const lack = lacking(state, me.country);
-  return (
-    <Panel title="🃏 정책 카드 — 한 장만 고르세요" right={<Badge tone="warn">라운드마다 1장</Badge>}>
-      <ul className="grid sm:grid-cols-3 gap-2">
-        {POLICIES.map((a) => {
-          const opts = a.pick?.filter((k) => a.id !== 'invest' || !c.invested.includes(k));
-          const chosen = picks[a.id] && opts?.includes(picks[a.id]) ? picks[a.id] : undefined;
-          const pick = chosen ?? (opts ? (lack.find((k) => opts.includes(k)) ?? opts[0]) : undefined);
-          const cost = policyCost(me.country, a);
-          const poor = c.stock.eco < cost;
-          return (
-            <li key={a.id} className="rounded-xl border border-line bg-ink-950/40 p-3 flex flex-col">
-              <div className="flex items-center justify-between gap-2">
-                <div className="font-bold text-[15px]">{a.icon} {a.name}</div>
-                <Badge tone={poor ? 'bad' : 'info'}>💰 돈 {cost}{cost < a.cost ? ' (반값)' : ''}</Badge>
+  const cards = (
+    <ul className="grid sm:grid-cols-3 gap-2">
+      {POLICIES.map((a) => {
+        const cost = policyCost(me.country, a) + (isExtra ? EXTRA_CARD_COST : 0);
+        const opts = a.pick?.filter((k) => a.id !== 'invest' || !c.invested.includes(k));
+        const chosen = picks[a.id] && opts?.includes(picks[a.id]) ? picks[a.id] : undefined;
+        const pick = chosen ?? (opts ? (lack.find((k) => opts.includes(k)) ?? opts[0]) : undefined);
+        const poor = c.stock.eco < cost;
+        return (
+          <li key={a.id} className="rounded-xl border border-line bg-ink-950/40 p-3 flex flex-col">
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-bold text-[15px]">{a.icon} {a.name}</div>
+              <Badge tone={poor ? 'bad' : 'info'}>💰 돈 {cost}{!isExtra && policyCost(me.country, a) < a.cost ? ' (반값)' : ''}</Badge>
+            </div>
+            <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.id === 'invest' ? a.good.replace('+3', `+${investGain(me.country)}`) : a.good}</p>
+            <p className="text-sm text-slate-300"><span className="text-rose-300 font-semibold">👎 </span>{a.id === 'invest' && me.country === 'IND' ? '자원마다 한 번만 가능 (환경 피해 없음)' : a.bad}</p>
+            <p className="text-[11px] text-slate-400 mt-1 flex-1">이럴 때: {a.when}</p>
+            {a.pick && (
+              <div className="flex gap-1 mt-2" role="radiogroup" aria-label="대상 자원">
+                {a.pick.map((k) => (
+                  <button key={k} role="radio" aria-checked={pick === k} disabled={!opts!.includes(k)} title={opts!.includes(k) ? undefined : '이미 늘린 자원'} onClick={() => setPicks((s) => ({ ...s, [a.id]: k }))}
+                    className={cx('flex-1 rounded-lg border px-1 py-1.5 text-xs font-semibold disabled:opacity-30 disabled:line-through', pick === k ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-line text-slate-300')}>
+                    {RES_INFO[k].icon} {RES_INFO[k].name}
+                  </button>
+                ))}
               </div>
-              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.id === 'invest' ? a.good.replace('+3', `+${investGain(me.country)}`) : a.good}{a.id === 'invest' && me.country === 'IND' ? ' (제조 강국)' : ''}</p>
-              <p className="text-sm text-slate-300"><span className="text-rose-300 font-semibold">👎 </span>{a.bad}</p>
-              <p className="text-[11px] text-slate-400 mt-1 flex-1">이럴 때: {a.when}</p>
-              {a.pick && (
-                <div className="flex gap-1 mt-2" role="radiogroup" aria-label="대상 자원">
-                  {a.pick.map((k) => (
-                    <button key={k} role="radio" aria-checked={pick === k} disabled={!opts!.includes(k)} title={opts!.includes(k) ? undefined : '이미 늘린 자원'} onClick={() => setPicks((s) => ({ ...s, [a.id]: k }))}
-                      className={cx('flex-1 rounded-lg border px-1 py-1.5 text-xs font-semibold disabled:opacity-30 disabled:line-through', pick === k ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-line text-slate-300')}>
-                      {RES_INFO[k].icon} {RES_INFO[k].name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <Btn small className="mt-2 w-full" disabled={!canAct || busy || poor || (!!a.pick && !pick)} onClick={() => run('policy', { id: a.id, pick }, `정책 「${a.name}」을(를) 골랐습니다.`)}>
-                {poor ? '✕ 돈이 부족해요' : !canAct ? '대표만 고를 수 있어요' : '이 카드 고르기'}
-              </Btn>
-            </li>
-          );
-        })}
-      </ul>
+            )}
+            <Btn small className="mt-2 w-full" disabled={!canAct || busy || poor || (!!a.pick && !pick)} onClick={() => run('policy', { id: a.id, pick }, `정책 「${a.name}」을(를) 골랐습니다.`)}>
+              {poor ? '✕ 돈이 부족해요' : !canAct ? '대표만 고를 수 있어요' : isExtra ? `돈 ${cost} 내고 고르기` : '이 카드 고르기'}
+            </Btn>
+          </li>
+        );
+      })}
+    </ul>
+  );
+  if (!c.policy) return <Panel title="🃏 정책 카드 — 한 장 고르세요" right={<Badge tone="warn">라운드마다 1장</Badge>}>{cards}</Panel>;
+  return (
+    <Panel title="🃏 정책 카드" right={<Badge tone="good">✓ 선택 완료</Badge>}>
+      <p className="text-sm"><b>{label(c.policy)}</b>{c.extra && <> · <b>{label(c.extra)}</b> <span className="text-amber-200">(추가 카드)</span></>}</p>
+      {c.extra ? <p className="text-xs text-slate-400 mt-1">이번 라운드에 고를 수 있는 카드를 모두 썼습니다.</p> : !more ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Btn small tone="ghost" onClick={() => setMore(true)}>💰 돈 {EXTRA_CARD_COST}을 더 내고 한 장 더 고르기</Btn>
+          <span className="text-xs text-slate-400">돈이 남는다면 카드를 한 장 더 쓸 수 있어요.</span>
+        </div>
+      ) : (
+        <div className="mt-3">
+          <div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold text-amber-200">추가 카드 — 카드 값에 돈 {EXTRA_CARD_COST}이 더 붙습니다</span><button className="text-xs text-slate-400 underline" onClick={() => setMore(false)}>접기</button></div>
+          {cards}
+        </div>
+      )}
     </Panel>
   );
 }

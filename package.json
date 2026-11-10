@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/test-engine.ts",
-    "loadtest": "tsx scripts/loadtest.ts"
+    "loadtest": "tsx scripts/loadtest.ts",
+    "balance": "tsx scripts/balance.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

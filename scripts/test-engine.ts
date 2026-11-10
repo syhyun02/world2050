@@ -43,8 +43,12 @@ test('정책 카드: 라운드마다 1장, 비용 차감, 돈 부족 시 불가'
   fails(() => run(r, 'policy', 'IND', { id: 'invest' }), /자원을 고르세요/);
   assert.equal(c.stock.eco, eco);
   run(r, 'policy', 'IND', { id: 'invest', pick: 'energy' });
-  assert.equal(c.stock.eco, eco - 8); assert.equal(c.prod.energy, prod + 4); assert.equal(c.env, env - 3);
-  fails(() => run(r, 'policy', 'IND', { id: 'green' }), /이미 골랐습니다/);
+  assert.equal(c.stock.eco, eco - 8); assert.equal(c.prod.energy, prod + 4); assert.equal(c.env, env);
+  // 추가 카드: 돈 10을 더 내면 한 장 더, 그 이상은 불가
+  const e2 = c.stock.eco, env2 = c.env;
+  run(r, 'policy', 'IND', { id: 'green' });
+  assert.equal(c.stock.eco, e2 - 5 - 10); assert.equal(c.env, env2 + 8); assert.equal(c.extra!.id, 'green');
+  fails(() => run(r, 'policy', 'IND', { id: 'emergency', pick: 'food' }), /더 고를 수 없습니다/);
   const nov = r.countries.NOV; nov.stock.eco = 3;
   fails(() => run(r, 'policy', 'NOV', { id: 'green' }), /돈이 부족/);
   fails(() => run(r, 'policy', 'NOV', { id: 'welfare' }), /알 수 없는/);
