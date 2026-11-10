@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   CLAUSES, COUNTRIES, COUNTRY_IDS, IDX_INFO, POLICIES, RELIEF_AMOUNT, RES, RES_INFO, ROUNDS, STANCES,
-  TREATY_RULES, VITALS, balanceOf,
+  TREATY_RULES, VITALS, balanceOf, investGain, policyCost,
 } from '../../../shared/data';
 import { aliveIds, countryScore, lacking, projectInfo, ranking, tallyTreaty } from '../../../shared/engine';
 import { diagnose } from '../../../shared/lessons';
@@ -252,7 +252,7 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
               <Bar value={c[k]} color={k === 'env' ? '#34d399' : '#38bdf8'} />
             </div>
           ))}
-          <p className="text-[11px] text-slate-400">목숨이 같으면 나라 점수로 순위를 정합니다. 지금 <b className="text-slate-200">{countryScore(c)}점</b> (신뢰도 40% + 환경 40% + 돈 최대 20점)</p>
+          <p className="text-[11px] text-slate-400">목숨이 같으면 나라 점수로 순위를 정합니다. 지금 <b className="text-slate-200">{countryScore(c)}점</b> (신뢰도 40% + 환경을 처음보다 올린 정도 40% + 돈 최대 20점)</p>
         </div>
       </Panel>}
 
@@ -305,28 +305,31 @@ function PolicyPanel({ state, me, cmd, canAct }: P) {
     <Panel title="🃏 정책 카드 — 한 장만 고르세요" right={<Badge tone="warn">라운드마다 1장</Badge>}>
       <ul className="grid sm:grid-cols-3 gap-2">
         {POLICIES.map((a) => {
-          const pick = picks[a.id] ?? (a.pick ? (lack.find((k) => a.pick!.includes(k)) ?? a.pick[0]) : undefined);
-          const poor = c.stock.eco < a.cost;
+          const opts = a.pick?.filter((k) => a.id !== 'invest' || !c.invested.includes(k));
+          const chosen = picks[a.id] && opts?.includes(picks[a.id]) ? picks[a.id] : undefined;
+          const pick = chosen ?? (opts ? (lack.find((k) => opts.includes(k)) ?? opts[0]) : undefined);
+          const cost = policyCost(me.country, a);
+          const poor = c.stock.eco < cost;
           return (
             <li key={a.id} className="rounded-xl border border-line bg-ink-950/40 p-3 flex flex-col">
               <div className="flex items-center justify-between gap-2">
                 <div className="font-bold text-[15px]">{a.icon} {a.name}</div>
-                <Badge tone={poor ? 'bad' : 'info'}>💰 돈 {a.cost}</Badge>
+                <Badge tone={poor ? 'bad' : 'info'}>💰 돈 {cost}{cost < a.cost ? ' (반값)' : ''}</Badge>
               </div>
-              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.good}{a.id === 'invest' && me.country === 'IND' ? ' (우리는 +3)' : ''}</p>
-              <p className="text-sm text-slate-300"><span className="text-rose-300 font-semibold">👎 </span>{a.id === 'invest' && me.country === 'ARC' ? '없음 (첨단 기술 덕분)' : a.bad}</p>
+              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.id === 'invest' ? a.good.replace('+3', `+${investGain(me.country)}`) : a.good}{a.id === 'invest' && me.country === 'IND' ? ' (제조 강국)' : ''}</p>
+              <p className="text-sm text-slate-300"><span className="text-rose-300 font-semibold">👎 </span>{a.bad}</p>
               <p className="text-[11px] text-slate-400 mt-1 flex-1">이럴 때: {a.when}</p>
               {a.pick && (
                 <div className="flex gap-1 mt-2" role="radiogroup" aria-label="대상 자원">
                   {a.pick.map((k) => (
-                    <button key={k} role="radio" aria-checked={pick === k} onClick={() => setPicks((s) => ({ ...s, [a.id]: k }))}
-                      className={cx('flex-1 rounded-lg border px-1 py-1.5 text-xs font-semibold', pick === k ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-line text-slate-300')}>
+                    <button key={k} role="radio" aria-checked={pick === k} disabled={!opts!.includes(k)} title={opts!.includes(k) ? undefined : '이미 늘린 자원'} onClick={() => setPicks((s) => ({ ...s, [a.id]: k }))}
+                      className={cx('flex-1 rounded-lg border px-1 py-1.5 text-xs font-semibold disabled:opacity-30 disabled:line-through', pick === k ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-line text-slate-300')}>
                       {RES_INFO[k].icon} {RES_INFO[k].name}
                     </button>
                   ))}
                 </div>
               )}
-              <Btn small className="mt-2 w-full" disabled={!canAct || busy || poor} onClick={() => run('policy', { id: a.id, pick }, `정책 「${a.name}」을(를) 골랐습니다.`)}>
+              <Btn small className="mt-2 w-full" disabled={!canAct || busy || poor || (!!a.pick && !pick)} onClick={() => run('policy', { id: a.id, pick }, `정책 「${a.name}」을(를) 골랐습니다.`)}>
                 {poor ? '✕ 돈이 부족해요' : !canAct ? '대표만 고를 수 있어요' : '이 카드 고르기'}
               </Btn>
             </li>
@@ -390,7 +393,7 @@ function DisputePanel({ state, me, cmd, canAct }: P) {
                 <div className="text-xs text-slate-200">{STANCES[k].desc}</div>
               </button>
             ))}
-            <p className="text-xs text-slate-400">두 나라 모두 평화로운 방법(위 두 가지)을 고르면: 남은 라운드 동안 그린벨트는 물 4, 솔라니아는 에너지 4를 서로 주고, 양국 신뢰도 +8. 한쪽이라도 혼자 밀어붙이면 상대는 물을 잃습니다.</p>
+            <p className="text-xs text-slate-400">두 나라 모두 평화로운 방법(위 두 가지)을 고르면: 강을 함께 관리해 두 나라의 물 생산이 +2씩 늘고, 신뢰도 +8. 한쪽이라도 혼자 밀어붙이면 상대는 물을 잃습니다.</p>
           </div>
         )
       ) : (

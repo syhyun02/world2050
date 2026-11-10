@@ -8,7 +8,7 @@
 import { QUIZZES } from './content';
 import {
   CLAUSES, COUNTRIES, COUNTRY_IDS, DISPUTE_PARTIES, POLICIES, RES, RES_INFO, ROUNDS,
-  RELIEF_AMOUNT, START_LIVES, TEACHER_EVENTS, TOTAL_ROUNDS, TREATY_RULES, VITALS, fmtBundle,
+  RELIEF_AMOUNT, START_LIVES, investGain, policyCost, TEACHER_EVENTS, TOTAL_ROUNDS, TREATY_RULES, VITALS, fmtBundle,
 } from './data';
 import {
   GameError, type CountryId, type CountryState, type Ctx, type LogEntry, type MeInfo, type News,
@@ -26,7 +26,7 @@ function newCountry(id: CountryId): CountryState {
   const d = COUNTRIES[id];
   return {
     id, stock: { ...d.stock }, prod: { ...d.prod }, need: { ...d.need },
-    lives: START_LIVES, diedRound: null, reliefDone: false, env: d.env, trust: d.trust, policy: null,
+    lives: START_LIVES, diedRound: null, reliefDone: false, env: d.env, trust: d.trust, policy: null, invested: [],
     shortages: {}, trades: 0, roundTrust: { trade: 0, aid: 0 }, hubBonus: 0, quizBonus: [], delegate: null,
     history: [{ round: 0, stock: { ...d.stock }, lives: START_LIVES, env: d.env, trust: d.trust, shortages: [] }],
   };
@@ -36,7 +36,7 @@ export function newRoom(code: string, className: string, durationSec: number, jo
   const countries = {} as Record<CountryId, CountryState>;
   for (const id of COUNTRY_IDS) countries[id] = newCountry(id);
   const room: Room = {
-    v: 4, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
+    v: 5, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
     countries, players: {}, proposals: [], agreements: [], recurring: [], news: [], log: [],
     project: null, projectResults: {}, dispute: null, treaty: null,
     peace: 0, peaceHistory: [], severity: 1, results: null, quizStats: {}, seq: 0,
@@ -94,9 +94,14 @@ export function calcPeace(room: HasCountries) {
   return { value, trust: Math.round(trust), env: Math.round(env), life };
 }
 
-/** 나라 점수 (동점일 때 순위를 가르는 값) = 신뢰도 40% + 환경 40% + 돈(최대 20점) */
+/** 환경 노력 점수(0~100): 처음보다 환경을 얼마나 올렸는가. 출발선이 낮은 나라도 같은 기준으로 평가 */
+export function envEffort(c: CountryState): number {
+  return clamp(50 + (c.env - COUNTRIES[c.id].env) * 2);
+}
+
+/** 나라 점수 (동점일 때 순위를 가르는 값) = 신뢰도 40% + 환경 노력 40% + 돈(최대 20점) */
 export function countryScore(c: CountryState): number {
-  return Math.round(c.trust * 0.4 + c.env * 0.4 + Math.min(20, c.stock.eco / 3));
+  return Math.round(c.trust * 0.4 + envEffort(c) * 0.4 + Math.min(20, c.stock.eco / 3));
 }
 
 /** 순위: 살아남은 나라가 먼저, 늦게 멸망할수록 위, 목숨이 많을수록 위, 나라 점수가 높을수록 위 */
@@ -372,10 +377,9 @@ function resolveDispute(room: Room, now: number) {
   } else if (sa !== 'unilateral' && sb !== 'unilateral') {
     d.result = 'peace';
     for (const c of [A, B]) idx(c, 'trust', 8);
-    room.recurring.push({ from: 'GRN', to: 'SOL', res: 'water', amt: 4, until: 5, label: '미르강 공동 관리 협정' });
-    room.recurring.push({ from: 'SOL', to: 'GRN', res: 'energy', amt: 4, until: 5, label: '미르강 공동 관리 협정' });
+    for (const c of [A, B]) c.prod.water += 2; // 강을 함께 관리해 두 나라 모두 물을 더 얻음
     if (med >= 2) for (const m of d.mediators) idx(room.countries[m], 'trust', 2);
-    d.resultText = `평화적으로 해결되었습니다. 남은 라운드 동안 그린벨트는 물 4, 솔라니아는 에너지 4를 매 라운드 서로 줍니다. 양국 신뢰도 +8.${med >= 2 ? ` 중재국(${d.mediators.map(cname).join(', ')}) 신뢰도 +2 추가.` : ''}`;
+    d.resultText = `평화적으로 해결되었습니다. 강을 함께 관리해 두 나라의 물 생산이 +2씩 늘어납니다. 양국 신뢰도 +8.${med >= 2 ? ` 중재국(${d.mediators.map(cname).join(', ')}) 신뢰도 +2 추가.` : ''}`;
     addAgreement(room, '미르강 공동 관리 협정', [a, b, ...d.mediators], d.resultText);
     addNews(room, now, '미르강 분쟁, 평화적 해결', d.resultText, 'good');
   } else if (sa === 'unilateral' && sb === 'unilateral') {
@@ -586,21 +590,23 @@ export const commands: Record<string, Cmd> = {
     const c = requireActive(room, ctx);
     const def = POLICIES.find((x) => x.id === a.id) ?? fail('알 수 없는 정책 카드입니다.');
     need(!c.policy, '이번 라운드의 정책 카드는 이미 골랐습니다. (라운드마다 1장)');
-    need(c.stock.eco >= def.cost, `돈이 부족합니다. (${def.cost} 필요)`);
+    const cost = policyCost(c.id, def);
+    need(c.stock.eco >= cost, `돈이 부족합니다. (${cost} 필요)`);
     let pick: Vital | undefined;
     if (def.pick) pick = def.pick.find((k) => k === a.pick) ?? fail('대상 자원을 고르세요.');
-    c.stock.eco -= def.cost;
+    if (def.id === 'invest') { need(!c.invested.includes(pick!), `${RES_INFO[pick!].name}에는 이미 「생산 늘리기」를 썼습니다. (자원마다 한 번)`); c.invested.push(pick!); }
+    c.stock.eco -= cost;
     c.policy = { id: def.id, pick };
     let result = '';
     switch (def.id) {
       case 'invest': {
-        const v = c.id === 'IND' ? 3 : 2;
+        const v = investGain(c.id);
         c.prod[pick!] += v;
-        if (c.id !== 'ARC') idx(c, 'env', -3);
-        result = `${RES_INFO[pick!].name} 생산 +${v}${c.id === 'ARC' ? '' : ', 환경 −3'}`; break;
+        idx(c, 'env', -3);
+        result = `${RES_INFO[pick!].name} 생산 +${v}, 환경 −3`; break;
       }
       case 'green': idx(c, 'env', 8); result = '환경 +8'; break;
-      case 'emergency': c.stock[pick!] += 3; result = `${RES_INFO[pick!].name} +3`; break;
+      case 'emergency': c.stock[pick!] += 2; result = `${RES_INFO[pick!].name} +2`; break;
     }
     addLog(room, ctx.now, 'action', `정책 「${def.name}」${pick ? `(${RES_INFO[pick].name})` : ''} — ${result}`, c.id);
     refreshPeace(room);

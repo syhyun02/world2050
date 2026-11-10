@@ -31,6 +31,8 @@ export interface CountryState {
   trust: number;
   /** 이번 라운드에 고른 정책 카드 (라운드마다 1장) */
   policy: { id: string; pick?: Vital } | null;
+  /** 「생산 늘리기」를 이미 쓴 자원 (자원마다 게임 중 한 번) */
+  invested: Vital[];
   /** 라운드별 부족 자원 기록 */
   shortages: Record<number, Vital[]>;
   /** 성사된 거래·지원 횟수 */
@@ -157,7 +159,7 @@ export interface Results {
 /** 서버에 저장되는 방 전체 상태 */
 export interface Room {
   /** 저장 형식 버전 (규칙이 바뀌면 올림) */
-  v: 4;
+  v: 5;
   code: string;
   className: string;
   createdAt: number;
