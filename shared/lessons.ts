@@ -32,7 +32,7 @@ export function diagnose(room: PublicRoom, id: CountryId): Finding[] {
   const d = COUNTRIES[id];
   const out: Finding[] = [];
   const lostRounds = Object.entries(c.shortages).filter(([, v]) => v.length).map(([r, v]) => ({ round: Number(r), res: v }));
-  const trades = room.proposals.filter((p) => p.status === 'accepted' && (p.from === id || p.to === id)).length;
+  const trades = c.trades;
 
   // 1) 목숨을 잃은 직접 원인: 어떤 자원이 모자랐나
   const byRes = new Map<Vital, number[]>();

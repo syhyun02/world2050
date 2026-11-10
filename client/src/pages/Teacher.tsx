@@ -1,13 +1,13 @@
 // 교사용 관리자 대시보드
 import { useCallback, useEffect, useState } from 'react';
 import { COUNTRIES, COUNTRY_IDS, POLICIES, RES, RES_INFO, ROUNDS, TEACHER_EVENTS, VITALS } from '../../../shared/data';
-import type { CountryId, PublicRoom, Reflection, Results, Room } from '../../../shared/types';
+import type { CountryId, PublicRoom, Results } from '../../../shared/types';
 import { Rules } from '../components/Learn';
 import { aliveIds, projectInfo } from '../../../shared/engine';
-import { CountryReport, download, downloadCsv } from '../components/Report';
+import { download, downloadCsv } from '../lib/export';
 import { AgreementList, CountryTable, NewsFeed, PeaceGauge } from '../components/World';
-import { api, fmtTime, nav, teacherAuth, useRemaining, useRoom } from '../lib/net';
-import { Badge, Btn, ConnBadge, CountryTag, cx, Panel, phaseLabel, useAction, useToast } from '../lib/ui';
+import { api, nav, teacherAuth, useRoom } from '../lib/net';
+import { Badge, Btn, Clock, ConnBadge, CountryTag, cx, Panel, phaseLabel, useAction, useToast } from '../lib/ui';
 import { ProposalCard, ResultsPanel } from './Student';
 
 interface Summary { code: string; className: string; phase: PublicRoom['phase']; round: number; peace: number; players: number; online: number; durationSec: number; results: Results | null; peaceHistory: PublicRoom['peaceHistory'] }
@@ -59,7 +59,7 @@ function RoomList({ token, logout }: { token: string; logout: () => void }) {
     catch (e) { toast((e as Error).message, 'err'); }
   };
   const remove = async (r: Summary) => {
-    if (!confirm(`"${r.className}" 게임방을 삭제할까요?\n게임 기록과 학생 성찰이 모두 사라지며 되돌릴 수 없습니다.`)) return;
+    if (!confirm(`"${r.className}" 게임방을 삭제할까요?\n게임 기록이 모두 사라지며 되돌릴 수 없습니다.`)) return;
     try { await api(`/teacher/rooms/${r.code}`, { token, method: 'DELETE' }); load(); } catch (e) { toast((e as Error).message, 'err'); }
   };
   const done = rooms?.filter((r) => r.results) ?? [];
@@ -136,7 +136,6 @@ type TTab = 'status' | 'deals' | 'log' | 'events' | 'tools' | 'report' | 'guide'
 function RoomDash({ code, token, logout }: { code: string; token: string; logout: () => void }) {
   const conn = useRoom('teacher', code, token);
   const { state, teacher, status, cmd } = conn;
-  const remaining = useRemaining(state, conn.offset);
   const { run, busy } = useAction(cmd);
   const [tab, setTab] = useState<TTab>('status');
   useEffect(() => { if (status === 'denied') logout(); }, [status, logout]);
@@ -149,7 +148,7 @@ function RoomDash({ code, token, logout }: { code: string; token: string; logout
     : state.phase === 'roundEnd' ? { label: `▶ ROUND ${state.round + 1} 시작`, hint: '결산 내용을 함께 살펴본 뒤 다음 라운드를 시작하세요.', go: () => run('nextRound', {}, `ROUND ${state.round + 1}을 시작했습니다.`), tone: 'good' }
     : state.phase === 'paused' ? { label: '▶ 재개', hint: '일시정지 중입니다. 학생 화면의 모든 행동이 잠겨 있습니다.', go: () => run('resume', {}, '게임을 재개했습니다.'), tone: 'good' }
     : null;
-  const tabs: [TTab, string][] = [['status', '국가 현황'], ['deals', '거래·약속'], ['log', '활동 기록'], ['events', '국제 사건'], ['tools', '복구·설정'], ['report', '결과·보고서'], ['guide', '규칙']];
+  const tabs: [TTab, string][] = [['status', '국가 현황'], ['deals', '거래·약속'], ['log', '활동 기록'], ['events', '국제 사건'], ['tools', '복구·설정'], ['report', '결과'], ['guide', '규칙']];
 
   return (
     <div className="mx-auto max-w-6xl p-3 sm:p-4 space-y-3">
@@ -179,12 +178,12 @@ function RoomDash({ code, token, logout }: { code: string; token: string; logout
             {(state.phase === 'running' || state.phase === 'paused') && (
               <Btn tone="danger" disabled={busy} onClick={() => { if (confirm(`ROUND ${state.round}을 지금 종료하고 결산할까요?`)) run('endRound', {}, `ROUND ${state.round}을 종료했습니다.`); }}>⏹ 라운드 종료·결산</Btn>
             )}
-            {state.phase === 'finished' && <Btn onClick={() => setTab('report')}>📊 결과와 보고서 보기</Btn>}
+            {state.phase === 'finished' && <Btn onClick={() => setTab('report')}>📊 결과 보기</Btn>}
           </div>
-          <p className="text-xs text-slate-400 mt-2">{next?.hint ?? (state.phase === 'running' ? '제한 시간이 끝나면 자동으로 결산됩니다. 자원이 모자란 나라는 목숨을 잃습니다. 서로 찾아가 협상하도록 안내하세요.' : state.phase === 'finished' ? '게임이 끝났습니다. 전자칠판의 순위와 결과 분석으로 토의한 뒤, 학생들에게 성찰을 작성하도록 안내하세요.' : '')}</p>
+          <p className="text-xs text-slate-400 mt-2">{next?.hint ?? (state.phase === 'running' ? '제한 시간이 끝나면 자동으로 결산됩니다. 자원이 모자란 나라는 목숨을 잃습니다. 서로 찾아가 협상하도록 안내하세요.' : state.phase === 'finished' ? '게임이 끝났습니다. 전자칠판의 순위와 결과 분석(나라를 누르면 바뀝니다)으로 토의를 진행하세요.' : '')}</p>
         </div>
         <div className="flex items-center gap-5 justify-between">
-          <div className="text-center"><div className="text-xs text-slate-400">남은 시간</div><div className={cx('text-4xl font-extrabold tnum', remaining !== null && remaining < 60000 && 'text-rose-300')}>{fmtTime(remaining)}</div></div>
+          <div className="text-center"><div className="text-xs text-slate-400">남은 시간</div><Clock state={state} offset={conn.offset} className="text-4xl font-extrabold" /></div>
           <div className="text-center"><div className="text-xs text-slate-400">살아남은 나라</div><div className="text-4xl font-extrabold tnum">{aliveIds(state).length}<span className="text-lg text-slate-400">/6</span></div></div>
           <div className="text-center"><div className="text-xs text-slate-400">접속</div><div className="text-4xl font-extrabold tnum">{players.filter((p) => p.online).length}<span className="text-lg text-slate-400">/{players.length}</span></div></div>
         </div>
@@ -332,7 +331,7 @@ function Tools({ state, code, token, snapshots, cmd }: { state: PublicRoom; code
   const [key, setKey] = useState('eco');
   const [delta, setDelta] = useState(5);
   const restore = async (n: number) => {
-    if (!confirm(`ROUND ${n} 시작 시점으로 되돌릴까요?\n그 이후의 행동·거래 기록은 사라집니다. (참가자와 성찰은 유지, 일시정지 상태로 복구)`)) return;
+    if (!confirm(`ROUND ${n} 시작 시점으로 되돌릴까요?\n그 이후의 행동·거래 기록은 사라집니다. (참가자는 유지, 일시정지 상태로 복구)`)) return;
     try { await api(`/teacher/rooms/${code}/restore`, { token, body: { round: n } }); toast(`ROUND ${n} 시작 시점으로 복구했습니다. "재개"를 눌러 진행하세요.`); } catch (e) { toast((e as Error).message, 'err'); }
   };
   return (
@@ -361,8 +360,8 @@ function Tools({ state, code, token, snapshots, cmd }: { state: PublicRoom; code
         <p className="text-xs text-slate-400 mt-2">양수는 증가, 음수는 감소입니다. 모든 조정은 활동 기록에 남습니다.</p>
       </Panel>
       <Panel title="♻️ 게임 초기화">
-        <p className="text-xs text-slate-300">같은 방에서 처음부터 다시 시작합니다. 참가자·참가 코드는 유지되고, 게임 기록과 성찰은 지워집니다.</p>
-        <Btn small tone="danger" className="mt-2" disabled={busy} onClick={() => { if (confirm('게임을 처음 상태로 초기화할까요?\n지금까지의 게임 기록이 모두 사라집니다.') && confirm('정말 초기화합니다. 결과를 저장하려면 먼저 "결과·보고서"에서 내려받으세요.')) run('reset', {}, '게임을 초기화했습니다.'); }}>게임 초기화 및 재시작</Btn>
+        <p className="text-xs text-slate-300">같은 방에서 처음부터 다시 시작합니다. 참가자·참가 코드는 유지되고, 게임 기록은 지워집니다.</p>
+        <Btn small tone="danger" className="mt-2" disabled={busy} onClick={() => { if (confirm('게임을 처음 상태로 초기화할까요?\n지금까지의 게임 기록이 모두 사라집니다.') && confirm('정말 초기화합니다. 결과를 저장하려면 먼저 "결과" 탭에서 내려받으세요.')) run('reset', {}, '게임을 초기화했습니다.'); }}>게임 초기화 및 재시작</Btn>
       </Panel>
     </div>
   );
@@ -370,35 +369,20 @@ function Tools({ state, code, token, snapshots, cmd }: { state: PublicRoom; code
 
 function ReportTools({ state, code, token }: { state: PublicRoom; code: string; token: string }) {
   const toast = useToast();
-  const [full, setFull] = useState<Room | null>(null);
-  const [show, setShow] = useState<CountryId | 'ALL' | null>(null);
-  const load = async () => {
-    try { const r = (await api<{ room: Room }>(`/teacher/rooms/${code}/export`, { token })).room; setFull(r); return r; }
-    catch (e) { toast((e as Error).message, 'err'); return null; }
+  const saveJson = async () => {
+    try { const r = (await api<{ room: unknown }>(`/teacher/rooms/${code}/export`, { token })).room; download(`WORLD2050_${state.className}_${code}.json`, JSON.stringify(r, null, 2), 'application/json'); }
+    catch (e) { toast((e as Error).message, 'err'); }
   };
-  useEffect(() => { load(); }, [state.phase, state.round]);
-  const refl = (id: CountryId): Record<string, Reflection> => full?.reflections?.[id] ?? {};
-  const count = COUNTRY_IDS.reduce((s, id) => s + Object.keys(refl(id)).length, 0);
-  const ids = show === 'ALL' ? COUNTRY_IDS : show ? [show] : [];
   return (
     <div className="space-y-3">
-      {state.results && <div className="no-print"><ResultsPanel state={state} /></div>}
-      <Panel title="💾 결과 저장과 보고서 내보내기" className="no-print">
-        <p className="text-xs text-slate-300">게임 결과는 서버에 자동 저장되며 "게임방 목록 → 학급별 결과 비교"에 표시됩니다. 제출된 학생 성찰: <b>{count}건</b></p>
+      {state.results ? <ResultsPanel state={state} /> : <Panel><p className="text-sm text-slate-400">게임이 끝나면 이곳에 최종 순위와 나라별 결과 분석이 표시됩니다.</p></Panel>}
+      <Panel title="💾 결과 내려받기">
+        <p className="text-xs text-slate-300">결과는 "게임방 목록 → 학급별 결과 비교"에도 표시됩니다. 서버가 재시작되면 지워질 수 있으니 필요한 결과는 내려받아 두세요.</p>
         <div className="flex flex-wrap gap-2 mt-3">
-          <Btn small onClick={() => downloadCsv(state)}>📄 결과·활동 기록 CSV (엑셀)</Btn>
-          <Btn small tone="ghost" onClick={async () => { const r = await load(); if (r) download(`WORLD2050_${state.className}_${code}.json`, JSON.stringify(r, null, 2), 'application/json'); }}>전체 데이터 JSON</Btn>
-          <Btn small tone="ghost" onClick={async () => { await load(); setShow('ALL'); setTimeout(() => window.print(), 400); }}>🖨️ 6개국 보고서 인쇄 / PDF 저장</Btn>
-        </div>
-        <div className="flex flex-wrap gap-2 mt-3">
-          <span className="text-xs text-slate-400 self-center">국가별 보고서 보기:</span>
-          {COUNTRY_IDS.map((id) => <Btn key={id} small tone={show === id ? 'primary' : 'ghost'} onClick={async () => { await load(); setShow(id); }}>{COUNTRIES[id].short}</Btn>)}
-          {show && <Btn small tone="ghost" onClick={() => window.print()}>🖨️ 인쇄</Btn>}
+          <Btn small onClick={() => downloadCsv(state)}>📄 순위·결과 분석·활동 기록 CSV (엑셀)</Btn>
+          <Btn small tone="ghost" onClick={saveJson}>전체 데이터 JSON</Btn>
         </div>
       </Panel>
-      {ids.map((id, i) => (
-        <div key={id} className={cx('panel p-5', i < ids.length - 1 && 'page-break')}><CountryReport state={state} id={id} reflections={refl(id)} /></div>
-      ))}
     </div>
   );
 }

@@ -111,7 +111,8 @@ export function useRoom(role: 'student' | 'teacher' | 'board', room: string, tok
 /** 남은 시간(ms). 일시정지 중이면 고정 값 */
 export function useRemaining(state: PublicRoom | null, offset: number): number | null {
   const [, force] = useState(0);
-  useEffect(() => { const t = setInterval(() => force((n) => n + 1), 500); return () => clearInterval(t); }, []);
+  const ticking = state?.phase === 'running';
+  useEffect(() => { if (!ticking) return; const t = setInterval(() => force((n) => n + 1), 500); return () => clearInterval(t); }, [ticking]);
   if (!state) return null;
   if (state.phase === 'paused') return state.remainingMs;
   if (state.phase === 'running' && state.endsAt) return Math.max(0, state.endsAt - (Date.now() + offset));

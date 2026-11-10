@@ -1,24 +1,23 @@
 // 학생용 게임 화면 (스마트폰 세로 화면 우선)
 // 한 라운드에 할 일은 세 가지: ① 부족한 자원 채우기(협상) ② 정책 카드 1장 ③ 사건 카드
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  CLAUSES, COUNTRIES, COUNTRY_IDS, IDX_INFO, POLICIES, REFLECTION_QUESTIONS, RELIEF_AMOUNT, RES, RES_INFO, ROUNDS, STANCES,
-  START_LIVES, TREATY_RULES, VITALS,
+  CLAUSES, COUNTRIES, COUNTRY_IDS, IDX_INFO, POLICIES, RELIEF_AMOUNT, RES, RES_INFO, ROUNDS, STANCES,
+  TREATY_RULES, VITALS, balanceOf,
 } from '../../../shared/data';
 import { aliveIds, countryScore, lacking, projectInfo, ranking, tallyTreaty } from '../../../shared/engine';
 import { diagnose } from '../../../shared/lessons';
 import type { CountryId, MeInfo, Proposal, PublicRoom, ResBundle, Stance, Vital } from '../../../shared/types';
 import { KnowledgeDock, QuizPanel, Rules } from '../components/Learn';
-import { CountryReport } from '../components/Report';
 import { AgreementList, BreakingBanner, CountryTable, NewsFeed, PeaceBreakdown, PeaceGauge, WorldMap } from '../components/World';
-import { fmtTime, nav, session, useRemaining, useRoom } from '../lib/net';
-import { Badge, Bar, Btn, BundleText, ConnBadge, CountryTag, cx, Hearts, Panel, phaseLabel, ResPicker, useAction, useToast } from '../lib/ui';
+import { nav, session, useRoom } from '../lib/net';
+import { Badge, Bar, Btn, BundleText, Clock, ConnBadge, CountryTag, cx, Hearts, Panel, phaseLabel, ResPicker, useAction } from '../lib/ui';
 
 type Cmd = (name: string, args?: Record<string, unknown>) => Promise<void>;
 interface Draft { to: CountryId; give: ResBundle; take: ResBundle }
 interface P { state: PublicRoom; me: MeInfo; cmd: Cmd; isDelegate: boolean; canAct: boolean }
 type Tab = 'home' | 'deal' | 'world';
-type View = Tab | 'report' | 'help';
+type View = Tab | 'help';
 
 export default function Student() {
   const sess = session.get();
@@ -26,10 +25,9 @@ export default function Student() {
   const { state, me, status } = conn;
   const [view, setView] = useState<View>('home');
   const [draft, setDraft] = useState<Draft | null>(null);
-  const remaining = useRemaining(state, conn.offset);
 
   useEffect(() => { if (!sess) nav('/'); }, [sess]);
-  useEffect(() => { if (state?.phase === 'finished' || state?.phase === 'running') setView((v) => (v === 'report' || v === 'help' ? v : 'home')); }, [state?.phase, state?.round]);
+  useEffect(() => { if (state?.phase === 'finished' || state?.phase === 'running') setView((v) => (v === 'help' ? v : 'home')); }, [state?.phase, state?.round]);
   useEffect(() => { window.scrollTo({ top: 0 }); }, [view]);
 
   if (!sess) return null;
@@ -52,7 +50,6 @@ export default function Student() {
   const p: P = { state, me, cmd: conn.cmd, isDelegate, canAct };
   const incoming = state.proposals.filter((x) => x.to === me.country && x.status === 'pending').length;
   const tabs: [Tab, string, string, number?][] = [['home', '🏛️', '우리 나라'], ['deal', '🤝', '협상', incoming], ['world', '🌐', '세계']];
-  const low = remaining !== null && remaining < 60_000 && state.phase === 'running';
   const askHelp = (k: Vital) => {
     // 그 자원이 가장 많이 남는 나라를 상대로, 부족한 만큼을 돈과 바꾸는 제안을 미리 채워 둠
     const lack = c.need[k] - c.stock[k];
@@ -72,7 +69,7 @@ export default function Student() {
               <div className="text-[11px] text-slate-300 truncate">{phaseLabel(state)}{state.round >= 1 && state.phase !== 'finished' ? ` · ${ROUNDS[state.round].crisis}` : ''}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className={cx('tnum text-xl font-extrabold leading-none', low && 'text-rose-300 anim-breaking')} aria-label="남은 시간">⏱ {state.phase === 'paused' ? '일시정지' : fmtTime(remaining)}</div>
+              <Clock state={state} offset={conn.offset} className="text-xl font-extrabold leading-none" prefix="⏱ " pausedLabel="일시정지" />
               <div className="mt-1 flex items-center justify-end gap-1.5">
                 <button className="text-[11px] text-sky-300 underline" onClick={() => setView(view === 'help' ? 'home' : 'help')}>❓ 규칙</button>
                 <ConnBadge status={status} />
@@ -95,7 +92,7 @@ export default function Student() {
         <BreakingBanner state={state} />
         {status !== 'online' && <div className="no-print rounded-xl bg-rose-950 border border-rose-500 px-4 py-2 text-sm">⚠ 서버와 연결이 끊겼습니다. 자동으로 다시 연결하는 중입니다. 게임 진행 상황은 서버에 저장되어 있습니다.</div>}
         {state.phase === 'paused' && <div className="no-print rounded-xl bg-amber-950 border border-amber-500 px-4 py-2 text-sm">⏸ 선생님이 게임을 잠시 멈췄습니다. 안내를 들어 주세요.</div>}
-        {dead && state.phase !== 'finished' && view !== 'report' && view !== 'help' && (
+        {dead && state.phase !== 'finished' && view !== 'help' && (
           <div className="no-print rounded-xl bg-slate-800 border border-slate-500 px-4 py-2.5 text-sm">💀 우리 나라는 ROUND {c.diedRound}에 멸망했습니다. 이제 <b>국제 구호단</b>으로서 라운드마다 한 나라를 도울 수 있습니다.</div>
         )}
         {!isDelegate && state.phase !== 'finished' && (view === 'home' || view === 'deal') && (
@@ -106,11 +103,23 @@ export default function Student() {
         {view === 'home' && <HomeTab {...p} go={setView} askHelp={askHelp} incoming={incoming} />}
         {view === 'deal' && <DealTab {...p} draft={draft} clearDraft={() => setDraft(null)} askHelp={askHelp} />}
         {view === 'world' && <WorldTab {...p} />}
-        {view === 'report' && <ReportView {...p} back={() => setView('home')} />}
         {view === 'help' && <Panel title="📘 게임 규칙" right={<Btn small tone="ghost" onClick={() => setView('home')}>닫기 ✕</Btn>}><Rules /></Panel>}
       </main>
-      {view !== 'report' && view !== 'help' && <KnowledgeDock round={state.round} country={me.country} />}
+      {view !== 'help' && <KnowledgeDock round={state.round} country={me.country} />}
     </div>
+  );
+}
+
+/** 우리 나라는 무엇이 남고 무엇이 모자란가 (평상시 라운드당) */
+function BalanceLine({ id }: { id: CountryId }) {
+  const b = balanceOf(id);
+  const plus = VITALS.filter((k) => b[k] >= 4), minus = VITALS.filter((k) => b[k] <= -4);
+  return (
+    <p className="text-sm mt-3 rounded-lg bg-ink-950/50 border border-line px-3 py-2">
+      <span className="text-slate-400">남는 것 </span><b className="text-emerald-300">{plus.length ? plus.map((k) => `${RES_INFO[k].icon} ${RES_INFO[k].name}`).join(', ') : '💰 돈'}</b>
+      <span className="text-slate-400"> · 모자란 것 </span><b className="text-rose-300">{minus.map((k) => `${RES_INFO[k].icon} ${RES_INFO[k].name}`).join(', ')}</b>
+      <span className="block text-xs text-slate-400 mt-0.5">남는 것을 팔아 모자란 것을 사세요. 거래하지 않으면 3라운드쯤 멸망합니다.</span>
+    </p>
   );
 }
 
@@ -172,12 +181,11 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
               <li key={n} className="rounded-lg bg-ink-950/50 px-3 py-2"><b className="text-amber-300 mr-1.5">{n}</b><b>{t}</b><span className="text-slate-300"> — {s}</span></li>
             ))}
           </ol>
-          <p className="text-xs text-slate-400 mt-3">우리 나라의 강점: <b className="text-slate-200">{d.strength}</b> / 약점: <b className="text-slate-200">{d.weakness}</b></p>
+          <BalanceLine id={me.country} />
         </Panel>
       )}
 
       {state.phase === 'finished' && state.results && <ResultsPanel state={state} me={me.country} />}
-      {state.phase === 'finished' && <Btn className="w-full" onClick={() => go('report')}>📝 성찰 작성하고 보고서 만들기</Btn>}
 
       {state.phase === 'roundEnd' && (
         <Panel title={`📊 ROUND ${state.round} 결산`} className="anim-pop">
@@ -272,9 +280,9 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
           </div>
         )}
         <p className="text-[11px] text-slate-500 mt-2">버튼은 대표 한 사람만 눌러요. 결정은 다 같이 의논하세요. · 고유 능력: <span className="text-amber-200">{d.perk}</span></p>
+        {state.phase !== 'lobby' && <BalanceLine id={me.country} />}
       </Panel>
 
-      {state.round >= 1 && state.phase !== 'finished' && <button className="no-print w-full text-xs text-slate-400 underline py-1" onClick={() => go('report')}>📝 성찰 메모·보고서 미리 보기</button>}
     </>
   );
 }
@@ -305,7 +313,7 @@ function PolicyPanel({ state, me, cmd, canAct }: P) {
                 <div className="font-bold text-[15px]">{a.icon} {a.name}</div>
                 <Badge tone={poor ? 'bad' : 'info'}>💰 돈 {a.cost}</Badge>
               </div>
-              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.good}{a.id === 'invest' && me.country === 'IND' ? ' (우리는 +4)' : ''}</p>
+              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.good}{a.id === 'invest' && me.country === 'IND' ? ' (우리는 +3)' : ''}</p>
               <p className="text-sm text-slate-300"><span className="text-rose-300 font-semibold">👎 </span>{a.id === 'invest' && me.country === 'ARC' ? '없음 (첨단 기술 덕분)' : a.bad}</p>
               <p className="text-[11px] text-slate-400 mt-1 flex-1">이럴 때: {a.when}</p>
               {a.pick && (
@@ -651,38 +659,6 @@ function WorldTab({ state, me }: P) {
       <Panel title="📊 나라별 현황"><CountryTable state={state} me={me.country} /></Panel>
       <Panel title="📰 국제 뉴스"><NewsFeed state={state} limit={6} /></Panel>
       <Panel title="📜 함께 맺은 약속"><AgreementList state={state} /></Panel>
-    </>
-  );
-}
-
-// ───────────────────────── 성찰·보고서 ─────────────────────────
-function ReportView({ state, me, cmd, back }: P & { back: () => void }) {
-  const saved = me.reflections[me.pid];
-  const [answers, setAnswers] = useState<string[]>(() => saved?.answers ?? ['', '', '', '']);
-  const [dirty, setDirty] = useState(false);
-  const toast = useToast();
-  const { run, busy } = useAction(cmd);
-  const savedKey = useMemo(() => JSON.stringify(saved?.answers ?? null), [saved]);
-  useEffect(() => { if (saved && !dirty) setAnswers(saved.answers); }, [savedKey]);
-  const save = async () => { if (await run('reflect', { answers }, '성찰을 저장했습니다.')) setDirty(false); };
-  return (
-    <>
-      <Panel title="✍️ 성찰 작성" className="no-print" right={<Btn small tone="ghost" onClick={back}>← 게임 화면</Btn>}>
-        <p className="text-xs text-slate-300 mb-3">직접 쓴 내용만 보고서에 실립니다. {saved && !dirty ? <b className="text-emerald-300">✓ 저장됨</b> : dirty ? <b className="text-amber-300">저장이 필요합니다</b> : ''}</p>
-        {REFLECTION_QUESTIONS.map((q, i) => (
-          <div key={i} className="mb-3">
-            <label htmlFor={`rq${i}`} className="text-sm font-semibold">Q{i + 1}. {q}</label>
-            <textarea id={`rq${i}`} rows={3} maxLength={600} value={answers[i]} onChange={(e) => { setAnswers((a) => a.map((v, j) => (j === i ? e.target.value : v))); setDirty(true); }}
-              className="mt-1 w-full rounded-lg bg-ink-950/60 border border-line px-3 py-2 text-sm leading-relaxed" placeholder="자유롭게 적어 보세요." />
-          </div>
-        ))}
-        <div className="flex flex-wrap gap-2">
-          <Btn disabled={busy || !dirty} onClick={save}>성찰 저장</Btn>
-          <Btn tone="ghost" onClick={() => { if (dirty) return toast('먼저 성찰을 저장하세요.', 'err'); window.print(); }}>🖨️ 보고서 인쇄 / PDF로 저장</Btn>
-        </div>
-        <p className="text-[11px] text-slate-500 mt-2">인쇄 창에서 "PDF로 저장"을 고르면 A4 보고서 파일로 내려받을 수 있습니다.</p>
-      </Panel>
-      <Panel><CountryReport state={state} id={me.country} reflections={me.reflections} /></Panel>
     </>
   );
 }

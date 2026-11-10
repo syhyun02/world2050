@@ -47,17 +47,4 @@ input, textarea, select { font-family: inherit; }
 .anim-dot { animation: pulse-dot 2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-/* 인쇄(보고서 PDF 저장)용 */
-.print-only { display: none; }
-@media print {
-  @page { size: A4; margin: 14mm; }
-  html, body, #root { height: auto; }
-  html, body { background: #fff !important; color: #111 !important; }
-  .no-print { display: none !important; }
-  .print-only { display: block; }
-  .report { color: #111 !important; }
-  .report * { color: #111 !important; border-color: #999 !important; background: transparent !important; }
-  .report section { break-inside: avoid; }
-  .page-break { break-after: page; }
-  .panel { border: none !important; background: transparent !important; padding: 0 !important; }
-}
+@media print { .no-print { display: none !important; } }

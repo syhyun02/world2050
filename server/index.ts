@@ -7,6 +7,7 @@ import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { COUNTRY_IDS } from '../shared/data';
 import { commands, joinRoom, meView, newRoom, publicView, tick } from '../shared/engine';
@@ -50,7 +51,7 @@ for (const f of fs.readdirSync(ROOM_DIR)) {
   if (!f.endsWith('.json')) continue;
   try {
     const room = JSON.parse(fs.readFileSync(path.join(ROOM_DIR, f), 'utf8')) as Room;
-    if (room.v !== 3) { console.log('이전 규칙으로 저장된 방은 건너뜁니다:', room.code); continue; }
+    if (room.v !== 4) { console.log('이전 규칙으로 저장된 방은 건너뜁니다:', room.code); continue; }
     for (const p of Object.values(room.players)) p.online = false;
     rooms.set(room.code, room);
   } catch (e) { console.error('방 데이터를 읽지 못했습니다:', f, e); }
@@ -69,7 +70,7 @@ function saveNow(room: Room) {
 }
 function scheduleSave(room: Room) {
   if (saveTimers.has(room.code)) return;
-  saveTimers.set(room.code, setTimeout(() => { saveTimers.delete(room.code); if (rooms.has(room.code)) saveNow(room); }, 400));
+  saveTimers.set(room.code, setTimeout(() => { saveTimers.delete(room.code); if (rooms.has(room.code)) saveNow(room); }, 1000));
 }
 /** 라운드 시작 시점의 상태를 복구용으로 보관 */
 function snapshot(room: Room) {
@@ -96,16 +97,18 @@ function broadcast(room: Room) {
     bcast.delete(room.code);
     const set = conns.get(room.code);
     if (!set?.size) return;
-    const msg = JSON.stringify({ t: 'state', now: Date.now(), s: publicView(room) });
-    for (const c of set) send(c, msg);
+    // 학생·전자칠판에는 가벼운 상태를, 교사에게만 전체 기록을 보냄. 문자열은 종류별로 한 번만 만듦
+    const now = Date.now();
+    let lite: string | null = null, full: string | null = null;
+    for (const c of set) {
+      if (c.role === 'teacher') send(c, (full ??= JSON.stringify({ t: 'state', now, s: publicView(room, true) })));
+      else send(c, (lite ??= JSON.stringify({ t: 'state', now, s: publicView(room, false) })));
+    }
   }, 40));
 }
 function sendMe(room: Room, pid: string) {
   const me = meView(room, pid);
   for (const c of conns.get(room.code) ?? []) if (c.pid === pid) send(c, { t: 'me', me });
-}
-function sendCountryMe(room: Room, country: CountryId) {
-  for (const c of conns.get(room.code) ?? []) if (c.country === country && c.pid) send(c, { t: 'me', me: meView(room, c.pid) });
 }
 function setOnline(room: Room, pid: string) {
   const p = room.players[pid];
@@ -198,7 +201,7 @@ app.post('/api/teacher/rooms/:code/restore', auth, (req, res) => {
   if (!room || !Number.isInteger(n) || !fs.existsSync(file)) return void res.status(404).json({ error: '복구 지점을 찾을 수 없습니다.' });
   const snap = JSON.parse(fs.readFileSync(file, 'utf8')) as Room;
   // 참가자·세션·성찰은 현재 것을 유지하고 게임 상태만 되돌림. 타이머는 일시정지 상태로 복구.
-  snap.players = room.players; snap.sessions = room.sessions; snap.reflections = room.reflections;
+  snap.players = room.players; snap.sessions = room.sessions;
   for (const id of COUNTRY_IDS) snap.countries[id].delegate = room.countries[id].delegate;
   snap.phase = 'paused'; snap.remainingMs = snap.durationSec * 1000; snap.endsAt = null;
   snap.seq = room.seq + 1000;
@@ -237,7 +240,20 @@ app.get('/api/rooms/:code', (req, res) => {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = [path.join(here, 'client'), path.join(here, '../dist/client')].find((d) => fs.existsSync(path.join(d, 'index.html')));
 if (clientDir) {
-  app.use(express.static(clientDir, { maxAge: '1h', setHeaders: (res, p) => { if (p.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
+  // JS·CSS는 서버를 켤 때 한 번만 압축해 두고, 요청마다 다시 압축하지 않음 (학생 수백 명이 동시에 접속해도 CPU를 거의 쓰지 않음)
+  const gz = new Map<string, { body: Buffer; type: string }>();
+  const assetDir = path.join(clientDir, 'assets');
+  if (fs.existsSync(assetDir)) for (const f of fs.readdirSync(assetDir)) {
+    const type = f.endsWith('.js') ? 'text/javascript; charset=utf-8' : f.endsWith('.css') ? 'text/css; charset=utf-8' : '';
+    if (type) gz.set(`/assets/${f}`, { body: gzipSync(fs.readFileSync(path.join(assetDir, f)), { level: 9 }), type });
+  }
+  app.use((req, res, next) => {
+    const hit = req.method === 'GET' ? gz.get(req.path) : undefined;
+    if (!hit || !String(req.headers['accept-encoding'] ?? '').includes('gzip')) return next();
+    res.set({ 'Content-Type': hit.type, 'Content-Encoding': 'gzip', 'Cache-Control': 'public, max-age=31536000, immutable', Vary: 'Accept-Encoding' }).send(hit.body);
+  });
+  // 파일 이름에 해시가 붙는 자산은 1년 캐시(재방문 시 다시 받지 않음), index.html은 항상 새로 확인
+  app.use(express.static(clientDir, { setHeaders: (res, p) => res.setHeader('Cache-Control', p.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache') }));
   app.get(/^\/(?!api|ws).*/, (_q, res) => res.sendFile(path.join(clientDir, 'index.html')));
 }
 
@@ -272,7 +288,7 @@ wss.on('connection', (ws) => {
       clearTimeout(helloTimer);
       if (!conns.has(room.code)) conns.set(room.code, new Set());
       conns.get(room.code)!.add(c);
-      send(c, { t: 'state', now: Date.now(), s: publicView(room) });
+      send(c, { t: 'state', now: Date.now(), s: publicView(room, c.role === 'teacher') });
       if (c.role === 'teacher') send(c, { t: 'teacher', joinCodes: room.joinCodes, snapshots: listSnapshots(room.code) });
       if (c.pid) { send(c, { t: 'me', me: meView(room, c.pid) }); setOnline(room, c.pid); }
       return;
@@ -302,7 +318,6 @@ wss.on('connection', (ws) => {
         runCommand(room, ctx, name, args);
         reply(true);
         if (conn.pid && name === 'quiz') sendMe(room, conn.pid);
-        if (conn.country && name === 'reflect') sendCountryMe(room, conn.country);
         if (conn.role === 'teacher') send(conn, { t: 'teacher', joinCodes: room.joinCodes, snapshots: listSnapshots(room.code) });
       } catch (e) {
         if (!(e instanceof GameError)) console.error('명령 처리 오류:', name, e);

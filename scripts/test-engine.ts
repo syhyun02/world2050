@@ -43,7 +43,7 @@ test('정책 카드: 라운드마다 1장, 비용 차감, 돈 부족 시 불가'
   fails(() => run(r, 'policy', 'IND', { id: 'invest' }), /자원을 고르세요/);
   assert.equal(c.stock.eco, eco);
   run(r, 'policy', 'IND', { id: 'invest', pick: 'energy' });
-  assert.equal(c.stock.eco, eco - 8); assert.equal(c.prod.energy, prod + 4); assert.equal(c.env, env - 3);
+  assert.equal(c.stock.eco, eco - 8); assert.equal(c.prod.energy, prod + 3); assert.equal(c.env, env - 3);
   fails(() => run(r, 'policy', 'IND', { id: 'green' }), /이미 골랐습니다/);
   const nov = r.countries.NOV; nov.stock.eco = 3;
   fails(() => run(r, 'policy', 'NOV', { id: 'green' }), /돈이 부족/);
@@ -111,7 +111,7 @@ test('라운드 종료 후 제출 불가, 시간 만료 자동 종료, 일시정
 test('공개 상태에 비밀 정보 없음', () => {
   const r = mk(); r.sessions.tok = 'd-ARC';
   const s = JSON.stringify(publicView(r));
-  assert.ok(!s.includes('joinCodes') && !s.includes('sessions') && !s.includes('quizAnswers') && !s.includes('reflections'));
+  assert.ok(!s.includes('joinCodes') && !s.includes('sessions') && !s.includes('quizAnswers'));
 });
 test('퀴즈: 1인 1회, 정답 시 국가당 1회 보너스, 오답 불이익 없음', () => {
   const r = mk(); run(r, 'start', 'T');

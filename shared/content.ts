@@ -252,8 +252,3 @@ export function cardsFor(round: number, country?: CountryId): Card[] {
   if (own.length > 1 && rd % 2 === 0) own.reverse();
   return [...rest.filter((c) => c.kind === 'common').slice(0, 1), ...rest.filter((c) => c.kind === 'case'), ...own.slice(0, 1), ...rest.filter((c) => c.kind === 'common').slice(1), ...own.slice(1)];
 }
-
-/** 지금까지 접한 학습 개념 (보고서용) */
-export function learnedCards(round: number, country?: CountryId): Card[] {
-  return CARDS.filter((c) => (c.kind === 'country' ? c.country === country : (c.round ?? 0) <= round));
-}

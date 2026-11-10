@@ -27,7 +27,7 @@ function newCountry(id: CountryId): CountryState {
   return {
     id, stock: { ...d.stock }, prod: { ...d.prod }, need: { ...d.need },
     lives: START_LIVES, diedRound: null, reliefDone: false, env: d.env, trust: d.trust, policy: null,
-    shortages: {}, roundTrust: { trade: 0, aid: 0 }, hubBonus: 0, quizBonus: [], delegate: null,
+    shortages: {}, trades: 0, roundTrust: { trade: 0, aid: 0 }, hubBonus: 0, quizBonus: [], delegate: null,
     history: [{ round: 0, stock: { ...d.stock }, lives: START_LIVES, env: d.env, trust: d.trust, shortages: [] }],
   };
 }
@@ -36,11 +36,11 @@ export function newRoom(code: string, className: string, durationSec: number, jo
   const countries = {} as Record<CountryId, CountryState>;
   for (const id of COUNTRY_IDS) countries[id] = newCountry(id);
   const room: Room = {
-    v: 3, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
+    v: 4, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
     countries, players: {}, proposals: [], agreements: [], recurring: [], news: [], log: [],
     project: null, projectResults: {}, dispute: null, treaty: null,
     peace: 0, peaceHistory: [], severity: 1, results: null, quizStats: {}, seq: 0,
-    joinCodes, sessions: {}, quizAnswers: {}, reflections: {},
+    joinCodes, sessions: {}, quizAnswers: {},
   };
   room.peace = calcPeace(room).value;
   room.peaceHistory.push({ round: 0, label: '시작', value: room.peace });
@@ -59,9 +59,15 @@ export function resetRoom(room: Room, now: number): void {
   addLog(room, now, 'teacher', '교사가 게임을 초기화했습니다.');
 }
 
-export function publicView(room: Room): PublicRoom {
-  const { joinCodes, sessions, quizAnswers, reflections, ...pub } = room;
-  return pub;
+/**
+ * 공개 상태. 교사용(full)은 전체, 학생·전자칠판용은 화면에 쓰지 않는 기록을 덜어 낸 가벼운 판.
+ * (활동 기록은 교사 화면에서만 보므로 학생에게 보내지 않음 → 전송량이 크게 줄어듦)
+ */
+export function publicView(room: Room, full = true): PublicRoom {
+  const { joinCodes, sessions, quizAnswers, ...pub } = room;
+  if (full) return pub;
+  const done = pub.proposals.filter((p) => p.status !== 'pending');
+  return { ...pub, log: [], news: pub.news.slice(-12), proposals: [...done.slice(-40), ...pub.proposals.filter((p) => p.status === 'pending')] };
 }
 
 export function meView(room: Room, pid: string): MeInfo | null {
@@ -69,7 +75,7 @@ export function meView(room: Room, pid: string): MeInfo | null {
   if (!p) return null;
   const quiz: Record<number, number> = {};
   for (const [rd, ans] of Object.entries(room.quizAnswers)) if (pid in ans) quiz[Number(rd)] = ans[pid];
-  return { pid, country: p.country, quiz, reflections: room.reflections[p.country] ?? {} };
+  return { pid, country: p.country, quiz };
 }
 
 // ───────────────────────── 공용 계산 ─────────────────────────
@@ -162,7 +168,7 @@ export function calcResults(room: Room): Results {
 // ───────────────────────── 내부 도우미 ─────────────────────────
 function addLog(room: Room, t: number, type: LogEntry['type'], text: string, country?: CountryId) {
   room.log.push({ t, round: room.round, type, text, country });
-  if (room.log.length > 600) room.log.splice(0, room.log.length - 600);
+  if (room.log.length > 400) room.log.splice(0, room.log.length - 400);
 }
 function addNews(room: Room, t: number, title: string, body: string, tone: News['tone'] = 'info') {
   room.news.push({ id: `n${++room.seq}`, t, round: room.round, title, body, tone });
@@ -264,8 +270,8 @@ function applyDisaster(room: Room, now: number) {
     gain(c, 'food', -d.food * sev); gain(c, 'water', -d.water * sev); gain(c, 'eco', -d.eco * sev);
     addLog(room, now, 'event', `${cname(id)} 재난 피해 (피해 배율 ×${sev})`, id);
   };
-  hit('OCE', { food: 8, water: 6, eco: 8 });
-  hit('NOV', { food: 5, water: 3, eco: 4 });
+  hit('OCE', { food: 5, water: 6, eco: 8 });
+  hit('NOV', { food: 4, water: 3, eco: 4 });
   const txt = sev > 1 ? '세계 환경 지수가 낮아 재난 피해가 30% 커졌습니다.' : sev < 1 ? '각국이 환경을 지킨 덕분에 재난 피해가 20% 줄었습니다.' : '세계 환경 지수가 보통 수준이어서 피해 규모는 예측대로였습니다.';
   addNews(room, now, '재난 피해 규모 발표', txt, sev > 1 ? 'bad' : 'info');
 }
@@ -445,6 +451,7 @@ function executeTrade(room: Room, p: Proposal, now: number) {
   }
   pay(from, p.give); receive(to, p.give);
   pay(to, p.take); receive(from, p.take);
+  from.trades += 1; to.trades += 1;
   if (!oneWay) {
     if (gSum + tSum >= 3) for (const c of [from, to]) if (c.roundTrust.trade < 3) { idx(c, 'trust', 1); c.roundTrust.trade += 1; }
     for (const c of [from, to]) if (c.id === 'OCE' && c.hubBonus < 4) { c.stock.eco += 1; c.hubBonus += 1; }
@@ -587,13 +594,13 @@ export const commands: Record<string, Cmd> = {
     let result = '';
     switch (def.id) {
       case 'invest': {
-        const v = c.id === 'IND' ? 4 : 3;
+        const v = c.id === 'IND' ? 3 : 2;
         c.prod[pick!] += v;
         if (c.id !== 'ARC') idx(c, 'env', -3);
         result = `${RES_INFO[pick!].name} 생산 +${v}${c.id === 'ARC' ? '' : ', 환경 −3'}`; break;
       }
       case 'green': idx(c, 'env', 8); result = '환경 +8'; break;
-      case 'emergency': c.stock[pick!] += 5; result = `${RES_INFO[pick!].name} +5`; break;
+      case 'emergency': c.stock[pick!] += 3; result = `${RES_INFO[pick!].name} +3`; break;
     }
     addLog(room, ctx.now, 'action', `정책 「${def.name}」${pick ? `(${RES_INFO[pick].name})` : ''} — ${result}`, c.id);
     refreshPeace(room);
@@ -628,7 +635,7 @@ export const commands: Record<string, Cmd> = {
     need(canPay(c, give), '제안한 만큼의 자원을 가지고 있지 않습니다.');
     room.proposals.push({ id: `p${++room.seq}`, from: c.id, to: a.to as CountryId, give, take, memo, status: 'pending', round: room.round, t: ctx.now });
     addLog(room, ctx.now, 'trade', `${cname(c.id)} → ${cname(a.to as CountryId)} 제안: 줌 [${fmtBundle(give)}] / 받음 [${fmtBundle(take)}]`, c.id);
-    if (room.proposals.length > 400) room.proposals.splice(0, room.proposals.length - 400);
+    if (room.proposals.length > 300) room.proposals.splice(0, room.proposals.length - 300);
   },
   respond(room, ctx, a) {
     requireRunning(room, ctx.now);
@@ -701,7 +708,7 @@ export const commands: Record<string, Cmd> = {
     addNews(room, ctx.now, `국제 구호단, ${cname(a.to as CountryId)}에 ${RES_INFO[res].name} 지원`, `멸망한 ${cname(c.id)}의 대표단이 구호단으로서 ${RES_INFO[res].name} ${RELIEF_AMOUNT}을(를) 전달했습니다.`, 'good');
   },
 
-  // ── 학생: 퀴즈·성찰 (모든 참가자) ──
+  // ── 학생: 퀴즈 (모든 참가자) ──
   quiz(room, ctx, a) {
     need(ctx.pid && ctx.country, '참가자만 가능합니다.');
     need(room.round >= 1, '게임이 시작되면 풀 수 있습니다.');
@@ -722,12 +729,6 @@ export const commands: Record<string, Cmd> = {
         addLog(room, ctx.now, 'system', `퀴즈 정답 보너스: 돈 +3`, c.id);
       }
     }
-  },
-  reflect(room, ctx, a) {
-    need(ctx.pid && ctx.country, '참가자만 가능합니다.');
-    need(Array.isArray(a.answers) && a.answers.length === 4, '성찰 문항 형식이 올바르지 않습니다.');
-    const answers = (a.answers as unknown[]).map((x) => String(x ?? '').slice(0, 600));
-    (room.reflections[ctx.country!] ??= {})[ctx.pid!] = { nick: room.players[ctx.pid!].nick, answers, t: ctx.now };
   },
 };
 

@@ -2,7 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { COUNTRIES, RES, RES_INFO, START_LIVES } from '../../../shared/data';
 import type { CountryId, PublicRoom, Res, ResBundle } from '../../../shared/types';
-import type { ConnStatus } from './net';
+import { fmtTime, useRemaining, type ConnStatus } from './net';
 
 export const cx = (...a: (string | false | null | undefined)[]) => a.filter(Boolean).join(' ');
 
@@ -167,6 +167,14 @@ export function useDelta(value: number, holdMs = 2600): number {
     return () => clearTimeout(t);
   }, [value, holdMs]);
   return delta;
+}
+
+/** 남은 시간. 시계만 따로 갱신해서 화면 전체가 매초 다시 그려지지 않게 함 */
+export function Clock({ state, offset, className, prefix = '', pausedLabel, pausedPrefix = '' }: { state: PublicRoom; offset: number; className?: string; prefix?: string; pausedLabel?: string; pausedPrefix?: string }) {
+  const ms = useRemaining(state, offset);
+  const paused = state.phase === 'paused';
+  const low = ms !== null && ms < 60_000 && state.phase === 'running';
+  return <div className={cx('tnum', className, low && 'text-rose-300 anim-breaking')} aria-label="남은 시간">{prefix}{paused && pausedLabel ? pausedLabel : `${paused ? pausedPrefix : ''}${fmtTime(ms)}`}</div>;
 }
 
 /** 목숨 표시: ❤️❤️ / ❤️🖤 / 💀 멸망 */

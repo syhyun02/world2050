@@ -3,19 +3,17 @@ import { COUNTRIES, COUNTRY_IDS, RES, RES_INFO, ROUNDS } from '../../../shared/d
 import { lacking, projectInfo } from '../../../shared/engine';
 import { AgreementList, PeaceGauge, WorldMap } from '../components/World';
 import { ResultsPanel } from './Student';
-import { fmtTime, useRemaining, useRoom } from '../lib/net';
-import { Badge, ConnBadge, cx, Hearts, phaseLabel } from '../lib/ui';
+import { useRoom } from '../lib/net';
+import { Badge, Clock, ConnBadge, cx, Hearts, phaseLabel } from '../lib/ui';
 
 export default function Board({ code }: { code: string }) {
   const conn = useRoom('board', code);
   const { state, status } = conn;
-  const remaining = useRemaining(state, conn.offset);
   if (status === 'gone') return <div className="h-full flex items-center justify-center text-2xl">게임방을 찾을 수 없습니다. 방 코드를 확인하세요.</div>;
   if (!state) return <div className="h-full flex items-center justify-center text-2xl text-slate-300">세계 현황판 연결 중…</div>;
   const def = ROUNDS[state.round];
   const news = state.news.slice(-6).reverse();
   const latest = news[0];
-  const low = remaining !== null && remaining < 60_000 && state.phase === 'running';
   const players = Object.values(state.players);
   const fs = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.());
 
@@ -38,7 +36,7 @@ export default function Board({ code }: { code: string }) {
         </div>
         <div className="text-right">
           <div className="text-xs lg:text-sm text-slate-300">남은 협상 시간</div>
-          <div className={cx('text-5xl lg:text-7xl font-extrabold tnum leading-none', low && 'text-rose-300 anim-breaking')}>{state.phase === 'paused' ? '⏸ ' : ''}{fmtTime(remaining)}</div>
+          <Clock state={state} offset={conn.offset} className="text-5xl lg:text-7xl font-extrabold leading-none" pausedPrefix="⏸ " />
         </div>
         <div className="flex flex-col items-end gap-1 no-print">
           <ConnBadge status={status} />

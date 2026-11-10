@@ -33,6 +33,8 @@ export interface CountryState {
   policy: { id: string; pick?: Vital } | null;
   /** 라운드별 부족 자원 기록 */
   shortages: Record<number, Vital[]>;
+  /** 성사된 거래·지원 횟수 */
+  trades: number;
   /** 이번 라운드에 얻은 신뢰도 보너스 (상한 관리용) */
   roundTrust: { trade: number; aid: number };
   hubBonus: number;
@@ -152,16 +154,10 @@ export interface Results {
   };
 }
 
-export interface Reflection {
-  nick: string;
-  answers: string[];
-  t: number;
-}
-
 /** 서버에 저장되는 방 전체 상태 */
 export interface Room {
   /** 저장 형식 버전 (규칙이 바뀌면 올림) */
-  v: 3;
+  v: 4;
   code: string;
   className: string;
   createdAt: number;
@@ -191,16 +187,14 @@ export interface Room {
   joinCodes: Record<CountryId, string>;
   sessions: Record<string, string>;
   quizAnswers: Record<number, Record<string, number>>;
-  reflections: Partial<Record<CountryId, Record<string, Reflection>>>;
 }
 
-export type PublicRoom = Omit<Room, 'joinCodes' | 'sessions' | 'quizAnswers' | 'reflections'>;
+export type PublicRoom = Omit<Room, 'joinCodes' | 'sessions' | 'quizAnswers'>;
 
 export interface MeInfo {
   pid: string;
   country: CountryId;
   quiz: Record<number, number>;
-  reflections: Record<string, Reflection>;
 }
 
 export interface Ctx {
