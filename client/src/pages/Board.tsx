@@ -87,8 +87,9 @@ export default function Board({ code }: { code: string }) {
           {state.project && (
             <div className="panel p-4">
               <div className="font-bold text-sky-200">🌐 {ROUNDS[state.round].project!.name}</div>
-              <div className="text-3xl font-extrabold tnum mt-1">{state.project.total} <span className="text-lg text-slate-400">/ {state.project.target}</span></div>
-              <div className="h-3 rounded-full bg-ink-950 mt-2 overflow-hidden"><div className="h-full bg-emerald-400 transition-all duration-700" style={{ width: `${Math.min(100, (state.project.total / state.project.target) * 100)}%` }} /></div>
+              <div className="text-3xl font-extrabold tnum mt-1">{state.project.joined.length} <span className="text-lg text-slate-400">/ {ROUNDS[state.round].project!.need}개국 참여</span></div>
+              <div className="text-sm text-slate-300">{state.project.joined.map((id) => COUNTRIES[id].short).join(' · ') || '아직 참여한 나라가 없습니다'}</div>
+              <div className="h-3 rounded-full bg-ink-950 mt-2 overflow-hidden"><div className="h-full bg-emerald-400 transition-all duration-700" style={{ width: `${Math.min(100, (state.project.joined.length / ROUNDS[state.round].project!.need) * 100)}%` }} /></div>
             </div>
           )}
           <div className="panel p-4 flex-1 min-h-40 overflow-y-auto">

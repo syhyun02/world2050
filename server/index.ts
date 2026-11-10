@@ -50,6 +50,7 @@ for (const f of fs.readdirSync(ROOM_DIR)) {
   if (!f.endsWith('.json')) continue;
   try {
     const room = JSON.parse(fs.readFileSync(path.join(ROOM_DIR, f), 'utf8')) as Room;
+    if (room.v !== 2) { console.log('이전 규칙으로 저장된 방은 건너뜁니다:', room.code); continue; }
     for (const p of Object.values(room.players)) p.online = false;
     rooms.set(room.code, room);
   } catch (e) { console.error('방 데이터를 읽지 못했습니다:', f, e); }

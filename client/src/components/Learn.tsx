@@ -1,7 +1,7 @@
 // 교육 콘텐츠 화면: 오늘의 세계 시민 지식 패널, 퀴즈, 규칙 안내
 import { useEffect, useState } from 'react';
 import { cardsFor, QUIZZES, type Card } from '../../../shared/content';
-import { ACTIONS, BASE_AP, CLAUSES, PACTS, RES_INFO, RES, SURVIVAL_HAPPY, TREATY_RULES, WIN_PEACE } from '../../../shared/data';
+import { CLAUSES, POLICIES, ROUNDS, SURVIVAL_HAPPY, TREATY_RULES, WIN_PEACE } from '../../../shared/data';
 import type { CountryId, MeInfo, PublicRoom } from '../../../shared/types';
 import { Badge, Btn, cx, Panel } from '../lib/ui';
 
@@ -68,7 +68,7 @@ export function QuizPanel({ state, me, cmd }: { state: PublicRoom; me: MeInfo; c
   const answered = mine !== undefined;
   const bonus = state.countries[me.country].quizBonus.includes(rd);
   return (
-    <Panel title={`🧠 ROUND ${rd} 퀴즈`} right={answered ? <Badge tone={mine === quiz.answer ? 'good' : 'warn'}>{mine === quiz.answer ? '✓ 정답' : '△ 오답 (불이익 없음)'}</Badge> : <Badge tone="info">정답 시 우리 국가 행동 포인트 +1</Badge>}>
+    <Panel title={`🧠 ROUND ${rd} 퀴즈`} right={answered ? <Badge tone={mine === quiz.answer ? 'good' : 'warn'}>{mine === quiz.answer ? '✓ 정답' : '△ 오답 (불이익 없음)'}</Badge> : <Badge tone="info">정답이면 우리 나라 돈 +3</Badge>}>
       <p className="font-semibold text-[15px] leading-relaxed">{quiz.q}</p>
       <div className="mt-3 space-y-2">
         {quiz.choices.map((c, i) => {
@@ -93,7 +93,7 @@ export function QuizPanel({ state, me, cmd }: { state: PublicRoom; me: MeInfo; c
         <div className="anim-pop mt-3 rounded-lg bg-ink-950/60 p-3 text-sm leading-relaxed">
           <p><b className="text-sky-200">해설</b> {quiz.explain}</p>
           <p className="mt-2 text-amber-200">🎯 {quiz.link}</p>
-          {bonus && <p className="mt-2 text-emerald-300 text-xs">우리 국가가 이번 라운드 퀴즈 보너스(행동 포인트 +1)를 받았습니다.</p>}
+          {bonus && <p className="mt-2 text-emerald-300 text-xs">우리 나라가 이번 라운드 퀴즈 보너스(돈 +3)를 받았습니다.</p>}
         </div>
       )}
     </Panel>
@@ -104,56 +104,44 @@ export function Rules() {
   const H = ({ children }: { children: string }) => <h3 className="font-bold text-sky-200 mt-4 mb-1.5 text-sm">{children}</h3>;
   return (
     <div className="text-sm text-slate-200 leading-relaxed">
-      <H>1. 목표</H>
-      <p>다른 나라를 이기는 게임이 아닙니다. <b>모든 국가가 최소 생존 조건을 달성</b>하고 <b>세계 평화 지수 {WIN_PEACE} 이상</b>이면 전 세계가 함께 승리합니다.</p>
-      <ul className="list-disc pl-5 mt-1 space-y-0.5 text-slate-300">
-        <li>최소 생존 조건: 최종 국민 행복도 {SURVIVAL_HAPPY} 이상 + 마지막 라운드에 식량·물·에너지 부족 없음</li>
-      </ul>
-      <H>2. 라운드 진행 (총 5라운드)</H>
-      <ol className="list-decimal pl-5 space-y-0.5 text-slate-300">
-        <li>라운드 시작: 각국이 자원을 생산하고 세계 사건이 발생합니다.</li>
-        <li>협상 시간: 행동 포인트 {BASE_AP}점으로 정책을 실행하고, 다른 나라와 거래·협정을 맺습니다.</li>
-        <li>라운드 종료: 식량·물·에너지를 필요량만큼 소비합니다. 모자라면 부족 1당 행복도 −1.5 (자원별 최대 −12), 모두 충분하면 행복도 +1.</li>
+      <H>🎯 목표</H>
+      <p>다른 나라를 이기는 게임이 아닙니다. <b>여섯 나라가 모두 살아남고</b> <b>세계 평화 지수가 {WIN_PEACE} 이상</b>이면 다 함께 승리합니다.</p>
+      <p className="text-slate-300 mt-1">살아남는 조건: 마지막에 행복도 {SURVIVAL_HAPPY} 이상 + 마지막 라운드에 식량·물·에너지가 모자라지 않음.</p>
+
+      <H>🔁 한 라운드에 할 일 (총 5라운드)</H>
+      <ol className="list-decimal pl-5 space-y-1 text-slate-300">
+        <li><b className="text-white">부족한 자원 채우기</b> — 라운드가 끝나면 식량·물·에너지를 필요한 만큼 씁니다. 모자라면 행복도가 떨어져요(1 모자랄 때마다 −1.5, 자원마다 최대 −12). 모두 충분하면 행복도 +1. 모자란 자원은 「협상」에서 다른 나라와 거래해 채웁니다.</li>
+        <li><b className="text-white">정책 카드 1장 고르기</b> — 네 장 중 한 장만.</li>
+        <li><b className="text-white">사건 카드에 답하기</b> — 그 라운드의 세계 사건에 참여할지 정합니다.</li>
       </ol>
-      <H>3. 행동 (대표가 실행, 각 행동은 라운드당 1회)</H>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs min-w-[520px]">
-          <thead><tr className="text-left text-slate-400"><th className="py-1 pr-2">행동</th><th className="pr-2">비용</th><th className="pr-2">효과</th><th>부작용</th></tr></thead>
-          <tbody>
-            {ACTIONS.map((a) => (
-              <tr key={a.id} className="border-t border-line/50 align-top">
-                <td className="py-1.5 pr-2 font-semibold whitespace-nowrap">{a.icon} {a.name}</td>
-                <td className="pr-2 whitespace-nowrap">AP {a.ap}{RES.filter((k) => a.cost[k]).map((k) => `, ${RES_INFO[k].name} ${a.cost[k]}`).join('')}</td>
-                <td className="pr-2">{a.effect}</td><td className="text-slate-400">{a.side}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <H>4. 외교</H>
-      <ul className="list-disc pl-5 space-y-0.5 text-slate-300">
-        <li><b>자원 거래·지원</b>: 행동 포인트가 들지 않습니다. 상대국 대표가 승인하는 순간 서버가 양쪽 자원을 확인하고 한 번에 교환합니다.</li>
-        <li>거래가 성사되면 양국 신뢰도 +1 (라운드당 최대 +3). 자원이 <b>부족한 나라</b>를 대가 없이 도우면 인도적 지원으로 인정되어 3단위당 신뢰도 +1 (라운드당 최대 +8).</li>
-        {Object.values(PACTS).map((p) => <li key={p.name}><b>{p.icon} {p.name}</b> (양국 AP 1{p.cost.eco ? `, 경제력 ${p.cost.eco}` : ''}): {p.effect} — {p.cond}</li>)}
-        <li><b>공동 대응 프로젝트</b>: 첫 기여 시 AP 1. 기여 3단위당 신뢰도 +1 (라운드당 최대 +6). 목표를 달성하면 모든 나라가 혜택을 받습니다.</li>
+
+      <H>🃏 정책 카드 (라운드마다 1장)</H>
+      <ul className="space-y-1 text-slate-300">
+        {POLICIES.map((a) => <li key={a.id}><b className="text-white">{a.icon} {a.name}</b> (돈 {a.cost}) — {a.good}{a.bad !== '당장 자원이 늘지는 않음' ? ` / ${a.bad}` : ''}</li>)}
       </ul>
-      <H>5. 세계 평화 협약 (5라운드)</H>
+
+      <H>🤝 협상</H>
       <ul className="list-disc pl-5 space-y-0.5 text-slate-300">
-        <li>조항은 {CLAUSES.length}개이며, 나라마다 조항별로 <b>제외 / 기본안 / 강화안</b>을 고릅니다.</li>
-        <li>강화안을 {TREATY_RULES.clauseVotes}개국 이상이 고르면 강화안, 기본안+강화안이 {TREATY_RULES.clauseVotes}개국 이상이면 기본안으로 조항이 포함됩니다.</li>
-        <li><b>채택 조건</b>: 포함된 조항 {TREATY_RULES.minClauses}개 이상 + 비준 찬성 {TREATY_RULES.ratifyVotes}개국 이상. 라운드가 끝날 때 집계합니다.</li>
-        <li><b>효력</b>: 비준한 나라에만 조항의 비용과 혜택이 적용됩니다. 비준하지 않은 나라는 신뢰도 −6. 협약이 무산되면 모든 나라 신뢰도 −3.</li>
+        <li>거래는 몇 번이든 할 수 있습니다. 상대 대표가 승인하면 자원이 한 번에 교환됩니다.</li>
+        <li>거래가 성사되면 두 나라 신뢰도 +1 (라운드당 최대 +3).</li>
+        <li>자원이 모자란 나라에 대가 없이 주면 3개당 신뢰도 +1 (라운드당 최대 +6).</li>
       </ul>
-      <H>6. 세계 평화 지수 계산</H>
-      <p className="text-slate-300">평균 신뢰도 30% + 평균 행복도 25% + 평균 환경 15% + 국가 간 형평 15% + 국제 협력도 15%. 형평은 가장 행복한 나라와 가장 어려운 나라의 차이가 작을수록 높습니다. 협력도는 거래·지원·협정·공동 대응이 성사될 때 오르고, 일방적 조치가 있으면 내려갑니다.</p>
-      <H>7. 국가별 성과 점수 (100점)</H>
+
+      <H>🌐 사건 카드</H>
       <ul className="list-disc pl-5 space-y-0.5 text-slate-300">
-        <li>경제와 생존 안정성 25점: 자원 부족이 없을수록(15점), 경제 기반이 유지될수록(10점)</li>
-        <li>국민 행복도 20점 · 환경 지속가능성 20점 · 국제 신뢰도 20점: 각 지수 × 0.2</li>
-        <li>국제사회 기여 15점: 지원·공동 대응·중재·이주민 수용 실적 (국가 여건을 반영해 보정)</li>
+        {[1, 2, 4].map((n) => { const p = ROUNDS[n].project!; return <li key={n}><b className="text-white">R{n} {p.name}</b> — 돈 {p.cost}을 내고 참여(신뢰도 +{n === 4 ? 4 : 3}). {p.need}개국 이상 참여하면 {p.success}.</li>; })}
+        <li><b className="text-white">R3 미르강 분쟁</b> — 그린벨트와 솔라니아가 각자 입장을 고릅니다. 둘 다 평화로운 방법을 고르면 두 나라 신뢰도 +8, 한쪽이라도 혼자 밀어붙이면 신뢰도 −15와 피해가 생깁니다. 다른 나라는 중재에 나설 수 있습니다(신뢰도 +3).</li>
+        <li><b className="text-white">R5 세계 평화 협약</b> — 조항 {CLAUSES.length}개에 찬성·반대 투표. {TREATY_RULES.clauseVotes}개국 이상 찬성한 조항이 {TREATY_RULES.minClauses}개 이상이면 채택됩니다. 채택된 조항의 효과와 신뢰도 +2는 찬성한 나라에 적용됩니다. 무산되면 모든 나라 신뢰도 −3.</li>
       </ul>
+
+      <H>🕊️ 세계 평화 지수</H>
+      <p className="text-slate-300">여섯 나라의 평균 신뢰도 40% + 평균 행복도 30% + 평균 환경 15% + 나라 간 형평 15%. 형평은 가장 행복한 나라와 가장 어려운 나라의 차이가 작을수록 높습니다. 한 나라만 잘살아서는 오르지 않아요.</p>
+
+      <H>📊 나라 점수 (100점)</H>
+      <p className="text-slate-300">자원 확보 25점(모자랄 때마다 −5) + 행복도 25점 + 환경 25점 + 신뢰도 25점.</p>
+
       <p className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/40 text-amber-100 text-xs p-3">
-        ※ 이 점수와 지수는 학습을 위한 게임 지표입니다. 실제 국제사회의 복잡한 현실을 정확하게 수치로 나타낸 것이 아닙니다. 국가와 사건은 모두 가상이며, "세계 시민 지식" 카드의 설명만 실제 사실에 바탕을 둡니다.
+        ※ 이 점수와 지수는 학습을 위한 게임 지표입니다. 실제 국제사회의 복잡한 현실을 정확하게 수치로 나타낸 것이 아닙니다. 나라와 사건은 모두 가상이며, "세계 시민 지식" 카드의 설명만 실제 사실에 바탕을 둡니다.
       </p>
     </div>
   );

@@ -116,8 +116,8 @@ export function PeaceGauge({ state, big }: { state: PublicRoom; big?: boolean })
 export function PeaceBreakdown({ state }: { state: PublicRoom }) {
   const p = calcPeace(state);
   const rows: [string, number, string][] = [
-    ['평균 국제 신뢰도', p.trust, '30%'], ['평균 국민 행복도', p.happy, '25%'], ['평균 환경 지속가능성', p.env, '15%'],
-    ['국가 간 형평 (행복도 격차 ' + p.gap + ')', p.equity, '15%'], ['국제 협력도', p.coop, '15%'],
+    ['여섯 나라의 평균 신뢰도', p.trust, '40%'], ['평균 행복도', p.happy, '30%'], ['평균 환경', p.env, '15%'],
+    ['나라 간 형평 (행복도 격차 ' + p.gap + ')', p.equity, '15%'],
   ];
   return (
     <div className="space-y-2">

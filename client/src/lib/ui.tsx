@@ -123,9 +123,9 @@ export function Stepper({ value, onChange, max = 999 }: { value: number; onChang
   );
 }
 
-export function ResPicker({ value, onChange, keys = RES, have }: { value: ResBundle; onChange: (b: ResBundle) => void; keys?: Res[]; have?: Record<Res, number> }) {
+export function ResPicker({ value, onChange, keys = RES, have, cols = 2 }: { value: ResBundle; onChange: (b: ResBundle) => void; keys?: Res[]; have?: Record<Res, number>; cols?: 1 | 2 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+    <div className={cx('grid grid-cols-1 gap-x-4 gap-y-1.5', cols === 2 && 'sm:grid-cols-2')}>
       {keys.map((k) => (
         <div key={k} className="flex items-center justify-between gap-2">
           <span className="text-sm">{RES_INFO[k].icon} {RES_INFO[k].name}{have && <span className="text-xs text-slate-400 tnum"> (보유 {have[k]})</span>}</span>

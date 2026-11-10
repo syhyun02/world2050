@@ -13,7 +13,7 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
   const my = res.countries[id];
   const mine = (t: string[]) => state.log.filter((l) => t.includes(l.type) && (l.country === id || l.text.includes(d.short)));
   const actions = state.log.filter((l) => l.type === 'action' && l.country === id);
-  const deals = mine(['trade', 'pact']).filter((l) => l.text.includes('⇄') || l.text.includes('지원') || l.text.includes('체결'));
+  const deals = mine(['trade']).filter((l) => l.text.includes('⇄') || l.text.includes('지원') || l.text.includes('체결'));
   const crisis = mine(['project', 'dispute', 'treaty']);
   const agreements = state.agreements.filter((a) => a.parties.includes(id));
   const concepts = [...new Set(learnedCards(state.round, id).flatMap((k) => k.concepts))];
@@ -57,12 +57,12 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
             ))}
           </tbody>
         </table>
-        <p className="text-sm mt-2">국가 성과 점수 <b>{my.total}점</b> = 생존 안정성 {my.survival}/25 + 행복도 {my.happy}/20 + 환경 {my.env}/20 + 신뢰도 {my.trust}/20 + 국제 기여 {my.contrib}/15</p>
+        <p className="text-sm mt-2">나라 점수 <b>{my.total}점</b> = 자원 확보 {my.survival}/25 + 행복도 {my.happy}/25 + 환경 {my.env}/25 + 신뢰도 {my.trust}/25</p>
       </Sec>
 
       <Sec t="6. 세계 공동 성과">
         <p className="text-sm">세계 평화 지수: {state.peaceHistory.map((h) => `${h.label} ${h.value}`).join(' → ')} (공동 승리 기준 {WIN_PEACE})</p>
-        <p className="text-sm">생존 조건 달성 국가 {res.world.survivors}/6 · 행복도 격차 {res.world.gapStart} → {res.world.gapEnd} · 재난 구호 달성률 {res.world.reliefPct}% · 세계 평화 협약 {res.world.treatyAdopted ? `채택 (${res.world.treatyClauses}개 조항)` : '미채택'} · 체결 협정 {res.world.agreements}건</p>
+        <p className="text-sm">생존 조건 달성 국가 {res.world.survivors}/6 · 행복도 격차 {res.world.gapStart} → {res.world.gapEnd} · 성공한 공동 대응 {res.world.projects}/3 (재난 구호 {res.world.reliefSuccess ? '성공' : '실패'}) · 미르강 분쟁 {res.world.disputePeace ? '평화적 해결' : '해결 실패'} · 세계 평화 협약 {res.world.treatyAdopted ? `채택 (${res.world.treatyClauses}개 조항)` : '무산'}</p>
         {state.phase === 'finished' && <p className="text-sm font-bold mt-1">최종 결과: {outcomeText[res.outcome]}</p>}
       </Sec>
 
@@ -70,7 +70,7 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
 
       <Sec t="8. 협상 과정의 성과와 한계 (기록에 근거한 사실)">
         <ul className="list-disc pl-5 text-sm space-y-0.5">
-          <li>성사된 거래·지원 {deals.length}건, 참여한 협정 {agreements.length}건, 국제 기여 포인트 {c.contrib}</li>
+          <li>성사된 거래·지원 {deals.length}건, 함께한 국제 약속 {agreements.length}건</li>
           <li>필수 자원 부족: {shortRounds.length ? shortRounds.join(', ') : '없음'}</li>
           <li>최소 생존 조건(행복도 {SURVIVAL_HAPPY} 이상, 최종 라운드 부족 없음): {state.phase === 'finished' ? (my.survived ? '달성' : '미달성') : '게임 종료 후 판정'}</li>
           <li>신뢰도 변화 {init.trust} → {c.trust}, 환경 지속가능성 변화 {init.env} → {c.env}</li>
@@ -96,10 +96,10 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
 /** 교사용: CSV 내보내기 (엑셀에서 한글이 깨지지 않도록 BOM 포함) */
 export function downloadCsv(room: PublicRoom) {
   const res = room.results ?? calcResults(room as Room);
-  const rows: (string | number)[][] = [['학급', '국가', '성과 점수', '생존 안정성', '행복도 점수', '환경 점수', '신뢰도 점수', '기여 점수', '생존 조건', '부족 횟수', '경제력', '식량', '물', '에너지', '기술력', '행복도', '환경', '신뢰도', '세계 평화 지수', '공동 결과']];
+  const rows: (string | number)[][] = [['학급', '국가', '나라 점수', '자원 확보 점수', '행복도 점수', '환경 점수', '신뢰도 점수', '생존 조건', '부족 횟수', '돈', '식량', '물', '에너지', '행복도', '환경', '신뢰도', '세계 평화 지수', '공동 결과']];
   for (const id of COUNTRY_IDS) {
     const c = room.countries[id], r = res.countries[id];
-    rows.push([room.className, COUNTRIES[id].name, r.total, r.survival, r.happy, r.env, r.trust, r.contrib, r.survived ? '달성' : '미달성', r.shortageCount, ...RES.map((k) => c.stock[k]), c.happy, c.env, c.trust, room.peace, outcomeText[res.outcome]]);
+    rows.push([room.className, COUNTRIES[id].name, r.total, r.survival, r.happy, r.env, r.trust, r.survived ? '달성' : '미달성', r.shortageCount, ...RES.map((k) => c.stock[k]), c.happy, c.env, c.trust, room.peace, outcomeText[res.outcome]]);
   }
   rows.push([], ['시각', '라운드', '종류', '국가', '내용']);
   for (const l of room.log) rows.push([new Date(l.t).toLocaleTimeString('ko-KR'), l.round, l.type, l.country ? COUNTRIES[l.country].short : '', l.text]);

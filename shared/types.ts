@@ -1,7 +1,7 @@
 // WORLD 2050 — 서버와 클라이언트가 공유하는 타입 정의
 
 export type CountryId = 'ARC' | 'SOL' | 'GRN' | 'OCE' | 'IND' | 'NOV';
-export type Res = 'eco' | 'food' | 'water' | 'energy' | 'tech';
+export type Res = 'eco' | 'food' | 'water' | 'energy';
 export type Vital = 'food' | 'water' | 'energy';
 export type Phase = 'lobby' | 'running' | 'paused' | 'roundEnd' | 'finished';
 export type ResMap = Record<Res, number>;
@@ -24,18 +24,12 @@ export interface CountryState {
   happy: number;
   env: number;
   trust: number;
-  ap: number;
-  /** 이번 라운드에 이미 사용한 행동 id */
-  used: string[];
-  /** 게임 전체에서 한 번만 가능한 행동 중 사용한 것 */
-  usedOnce: string[];
-  adapted: boolean;
+  /** 이번 라운드에 고른 정책 카드 (라운드마다 1장) */
+  policy: { id: string; pick?: Vital } | null;
   /** 라운드별 부족 자원 기록 */
   shortages: Record<number, Vital[]>;
-  /** 국제사회 기여 포인트 (지원·공동 대응·중재 등) */
-  contrib: number;
   /** 이번 라운드에 얻은 신뢰도 보너스 (상한 관리용) */
-  roundTrust: { trade: number; aid: number; project: number };
+  roundTrust: { trade: number; aid: number };
   hubBonus: number;
   quizBonus: number[];
   delegate: string | null;
@@ -49,14 +43,10 @@ export interface Player {
   online: boolean;
 }
 
-export type ProposalKind = 'trade' | 'pact';
-export type PactType = 'friend' | 'research' | 'waterdev' | 'renew';
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
 
 export interface Proposal {
   id: string;
-  kind: ProposalKind;
-  pactType?: PactType;
   from: CountryId;
   to: CountryId;
   /** 제안국(from)이 주는 자원 */
@@ -90,17 +80,16 @@ export interface News {
 export interface LogEntry {
   t: number;
   round: number;
-  type: 'system' | 'action' | 'trade' | 'pact' | 'project' | 'event' | 'treaty' | 'dispute' | 'teacher';
+  type: 'system' | 'action' | 'trade' | 'project' | 'event' | 'treaty' | 'dispute' | 'teacher';
   country?: CountryId;
   text: string;
 }
 
+/** 라운드 공동 대응: 나라마다 참여/불참만 정함 */
 export interface Project {
   round: number;
   id: string;
-  target: number;
-  contributions: Partial<Record<CountryId, ResBundle>>;
-  total: number;
+  joined: CountryId[];
   success?: boolean;
 }
 
@@ -113,12 +102,10 @@ export interface Dispute {
   resultText?: string;
 }
 
-export type ClauseLevel = 'none' | 'base' | 'strong';
 export interface Treaty {
-  choices: Partial<Record<CountryId, Record<string, ClauseLevel>>>;
-  ratify: Partial<Record<CountryId, 'yes' | 'no'>>;
-  notes: Partial<Record<CountryId, string>>;
-  result?: { adopted: boolean; clauses: Record<string, ClauseLevel>; yes: CountryId[]; no: CountryId[] };
+  /** 나라별 조항 찬반 (true = 찬성) */
+  votes: Partial<Record<CountryId, Record<string, boolean>>>;
+  result?: { adopted: boolean; clauses: Record<string, boolean> };
 }
 
 export interface Recurring {
@@ -135,7 +122,6 @@ export interface CountryResult {
   happy: number;
   env: number;
   trust: number;
-  contrib: number;
   total: number;
   survived: boolean;
   shortageCount: number;
@@ -148,10 +134,12 @@ export interface Results {
     peaceStart: number;
     gapStart: number;
     gapEnd: number;
-    reliefPct: number;
+    /** 성공한 공동 대응 수 (물 기금·에너지 연구·재난 구호) */
+    projects: number;
+    reliefSuccess: boolean;
+    disputePeace: boolean;
     treatyAdopted: boolean;
     treatyClauses: number;
-    agreements: number;
     survivors: number;
   };
   outcome: 'win' | 'partial' | 'crisis';
@@ -165,6 +153,8 @@ export interface Reflection {
 
 /** 서버에 저장되는 방 전체 상태 */
 export interface Room {
+  /** 저장 형식 버전 (규칙이 바뀌면 올림) */
+  v: 2;
   code: string;
   className: string;
   createdAt: number;
@@ -177,20 +167,16 @@ export interface Room {
   players: Record<string, Player>;
   proposals: Proposal[];
   agreements: Agreement[];
-  pactKeys: string[];
   recurring: Recurring[];
   news: News[];
   log: LogEntry[];
   project: Project | null;
-  pastProjects: Project[];
+  projectResults: Record<string, { joined: number; success: boolean }>;
   dispute: Dispute | null;
   treaty: Treaty | null;
-  coop: number;
-  coopRound: { trade: number; aid: number; pact: number };
   peace: number;
   peaceHistory: { round: number; label: string; value: number }[];
   severity: number;
-  reliefPct: number;
   results: Results | null;
   quizStats: Record<number, { answered: number; correct: number }>;
   seq: number;
