@@ -10,7 +10,7 @@ export type ResBundle = Partial<Record<Res, number>>;
 export interface Snapshot {
   round: number;
   stock: ResMap;
-  happy: number;
+  lives: number;
   env: number;
   trust: number;
   shortages: Vital[];
@@ -21,7 +21,12 @@ export interface CountryState {
   stock: ResMap;
   prod: ResMap;
   need: Record<Vital, number>;
-  happy: number;
+  /** 목숨. 라운드 끝에 필수 자원이 모자라면 −1, 0이면 멸망 */
+  lives: number;
+  /** 멸망한 라운드 (살아 있으면 null). 멸망한 나라는 국제 구호단이 됨 */
+  diedRound: number | null;
+  /** 구호단으로서 이번 라운드에 지원했는지 */
+  reliefDone: boolean;
   env: number;
   trust: number;
   /** 이번 라운드에 고른 정책 카드 (라운드마다 1장) */
@@ -80,7 +85,7 @@ export interface News {
 export interface LogEntry {
   t: number;
   round: number;
-  type: 'system' | 'action' | 'trade' | 'project' | 'event' | 'treaty' | 'dispute' | 'teacher';
+  type: 'system' | 'action' | 'trade' | 'project' | 'event' | 'treaty' | 'dispute' | 'teacher' | 'relief';
   country?: CountryId;
   text: string;
 }
@@ -118,31 +123,33 @@ export interface Recurring {
 }
 
 export interface CountryResult {
-  survival: number;
-  happy: number;
+  rank: number;
+  lives: number;
+  diedRound: number | null;
   env: number;
   trust: number;
-  total: number;
-  survived: boolean;
+  eco: number;
+  score: number;
   shortageCount: number;
 }
 
 export interface Results {
   countries: Record<CountryId, CountryResult>;
+  /** 1위부터 순서대로 */
+  ranking: CountryId[];
   world: {
     peace: number;
     peaceStart: number;
-    gapStart: number;
-    gapEnd: number;
     /** 성공한 공동 대응 수 (물 기금·에너지 연구·재난 구호) */
     projects: number;
     reliefSuccess: boolean;
     disputePeace: boolean;
+    /** 미르강 분쟁 결과 (none = 당사국 멸망으로 분쟁이 일어나지 않음) */
+    dispute: 'peace' | 'failed' | 'none';
     treatyAdopted: boolean;
     treatyClauses: number;
     survivors: number;
   };
-  outcome: 'win' | 'partial' | 'crisis';
 }
 
 export interface Reflection {
@@ -154,7 +161,7 @@ export interface Reflection {
 /** 서버에 저장되는 방 전체 상태 */
 export interface Room {
   /** 저장 형식 버전 (규칙이 바뀌면 올림) */
-  v: 2;
+  v: 3;
   code: string;
   className: string;
   createdAt: number;

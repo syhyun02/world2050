@@ -1,10 +1,10 @@
 // 전자칠판용 세계 현황판 (전체 화면)
 import { COUNTRIES, COUNTRY_IDS, RES, RES_INFO, ROUNDS } from '../../../shared/data';
-import { lacking } from '../../../shared/engine';
+import { lacking, projectInfo } from '../../../shared/engine';
 import { AgreementList, PeaceGauge, WorldMap } from '../components/World';
 import { ResultsPanel } from './Student';
 import { fmtTime, useRemaining, useRoom } from '../lib/net';
-import { Badge, ConnBadge, cx, phaseLabel } from '../lib/ui';
+import { Badge, ConnBadge, cx, Hearts, phaseLabel } from '../lib/ui';
 
 export default function Board({ code }: { code: string }) {
   const conn = useRoom('board', code);
@@ -54,7 +54,7 @@ export default function Board({ code }: { code: string }) {
       )}
 
       <div className="flex-1 grid lg:grid-cols-[1.9fr_1fr] gap-3 min-h-0">
-        <div className="panel p-3 flex flex-col gap-3">
+        <div className="panel p-3 flex flex-col gap-3 overflow-y-auto">
           {state.phase === 'finished' && state.results ? <ResultsPanel state={state} /> : <WorldMap state={state} big />}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
             {COUNTRY_IDS.map((id) => {
@@ -63,11 +63,11 @@ export default function Board({ code }: { code: string }) {
               return (
                 <div key={id} className="rounded-xl bg-ink-950/60 border p-2.5" style={{ borderColor: `${d.color}99` }}>
                   <div className="font-bold text-sm lg:text-base truncate" style={{ color: d.color }}>{d.icon} {d.short}</div>
-                  <div className="grid grid-cols-5 gap-0.5 mt-1.5 text-center tnum">
+                  <div className="grid grid-cols-4 gap-0.5 mt-1.5 text-center tnum">
                     {RES.map((k) => <div key={k} className={cx('rounded bg-ink-800 py-0.5', lack.includes(k as never) && 'bg-rose-500/30 text-rose-200')}><div className="text-[11px]" title={RES_INFO[k].name}>{RES_INFO[k].icon}</div><div className="text-sm lg:text-base font-bold">{c.stock[k]}</div></div>)}
                   </div>
-                  <div className="text-[11px] lg:text-xs mt-1.5 text-slate-300 tnum">😊 {c.happy} 🌱 {c.env} 🤝 {c.trust}</div>
-                  <div className="mt-1">{state.round === 0 ? <Badge tone="mute">{players.filter((p) => p.country === id).length}명 입장</Badge> : lack.length ? <Badge tone="bad">⚠ {lack.map((k) => RES_INFO[k].name).join('·')} 부족</Badge> : <Badge tone="good">✓ 안정</Badge>}</div>
+                  <div className="text-[11px] lg:text-sm mt-1.5 text-slate-300 tnum"><Hearts lives={c.lives} dead={c.diedRound !== null} /> · 🌱 {c.env} 🤝 {c.trust}</div>
+                  <div className="mt-1">{state.round === 0 ? <Badge tone="mute">{players.filter((p) => p.country === id).length}명 입장</Badge> : c.diedRound !== null ? <Badge tone="mute">국제 구호단</Badge> : lack.length ? <Badge tone="bad">⚠ {lack.map((k) => RES_INFO[k].name).join('·')} 부족</Badge> : <Badge tone="good">✓ 안정</Badge>}</div>
                 </div>
               );
             })}
@@ -87,9 +87,9 @@ export default function Board({ code }: { code: string }) {
           {state.project && (
             <div className="panel p-4">
               <div className="font-bold text-sky-200">🌐 {ROUNDS[state.round].project!.name}</div>
-              <div className="text-3xl font-extrabold tnum mt-1">{state.project.joined.length} <span className="text-lg text-slate-400">/ {ROUNDS[state.round].project!.need}개국 참여</span></div>
+              <div className="text-3xl font-extrabold tnum mt-1">{state.project.joined.length} <span className="text-lg text-slate-400">/ {projectInfo(state).need}개국 참여</span></div>
               <div className="text-sm text-slate-300">{state.project.joined.map((id) => COUNTRIES[id].short).join(' · ') || '아직 참여한 나라가 없습니다'}</div>
-              <div className="h-3 rounded-full bg-ink-950 mt-2 overflow-hidden"><div className="h-full bg-emerald-400 transition-all duration-700" style={{ width: `${Math.min(100, (state.project.joined.length / ROUNDS[state.round].project!.need) * 100)}%` }} /></div>
+              <div className="h-3 rounded-full bg-ink-950 mt-2 overflow-hidden"><div className="h-full bg-emerald-400 transition-all duration-700" style={{ width: `${Math.min(100, (state.project.joined.length / projectInfo(state).need) * 100)}%` }} /></div>
             </div>
           )}
           <div className="panel p-4 flex-1 min-h-40 overflow-y-auto">

@@ -50,7 +50,7 @@ for (const f of fs.readdirSync(ROOM_DIR)) {
   if (!f.endsWith('.json')) continue;
   try {
     const room = JSON.parse(fs.readFileSync(path.join(ROOM_DIR, f), 'utf8')) as Room;
-    if (room.v !== 2) { console.log('이전 규칙으로 저장된 방은 건너뜁니다:', room.code); continue; }
+    if (room.v !== 3) { console.log('이전 규칙으로 저장된 방은 건너뜁니다:', room.code); continue; }
     for (const p of Object.values(room.players)) p.online = false;
     rooms.set(room.code, room);
   } catch (e) { console.error('방 데이터를 읽지 못했습니다:', f, e); }
@@ -164,7 +164,7 @@ app.get('/api/teacher/rooms', auth, (_q, res) => res.json({ rooms: [...rooms.val
 app.post('/api/teacher/rooms', auth, (req, res) => {
   if (rooms.size >= 60) return void res.status(400).json({ error: '게임방이 너무 많습니다. 사용하지 않는 방을 삭제하세요.' });
   const className = String(req.body?.className ?? '').trim().slice(0, 20) || '이름 없는 학급';
-  const min = Math.min(60, Math.max(1, Number(req.body?.minutes) || 12));
+  const min = Math.min(60, Math.max(1, Number(req.body?.minutes) || 5));
   let c = code(5);
   while (rooms.has(c)) c = code(5);
   const joinCodes = {} as Record<CountryId, string>;

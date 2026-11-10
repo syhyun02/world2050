@@ -1,7 +1,7 @@
 // 교육 콘텐츠 화면: 오늘의 세계 시민 지식 패널, 퀴즈, 규칙 안내
 import { useEffect, useState } from 'react';
 import { cardsFor, QUIZZES, type Card } from '../../../shared/content';
-import { CLAUSES, POLICIES, ROUNDS, SURVIVAL_HAPPY, TREATY_RULES, WIN_PEACE } from '../../../shared/data';
+import { CLAUSES, POLICIES, RELIEF_AMOUNT, ROUNDS, START_LIVES, TREATY_RULES } from '../../../shared/data';
 import type { CountryId, MeInfo, PublicRoom } from '../../../shared/types';
 import { Badge, Btn, cx, Panel } from '../lib/ui';
 
@@ -57,7 +57,7 @@ export function KnowledgeDock({ round, country }: { round: number; country?: Cou
   );
 }
 
-export function QuizPanel({ state, me, cmd }: { state: PublicRoom; me: MeInfo; cmd: (n: string, a?: Record<string, unknown>) => Promise<void> }) {
+export function QuizPanel({ state, me, cmd, dead }: { state: PublicRoom; me: MeInfo; cmd: (n: string, a?: Record<string, unknown>) => Promise<void>; dead?: boolean }) {
   const rd = Math.min(state.round, 5);
   const quiz = QUIZZES[rd];
   const [sel, setSel] = useState<number | null>(null);
@@ -68,7 +68,7 @@ export function QuizPanel({ state, me, cmd }: { state: PublicRoom; me: MeInfo; c
   const answered = mine !== undefined;
   const bonus = state.countries[me.country].quizBonus.includes(rd);
   return (
-    <Panel title={`🧠 ROUND ${rd} 퀴즈`} right={answered ? <Badge tone={mine === quiz.answer ? 'good' : 'warn'}>{mine === quiz.answer ? '✓ 정답' : '△ 오답 (불이익 없음)'}</Badge> : <Badge tone="info">정답이면 우리 나라 돈 +3</Badge>}>
+    <Panel title={`🧠 ROUND ${rd} 퀴즈`} right={answered ? <Badge tone={mine === quiz.answer ? 'good' : 'warn'}>{mine === quiz.answer ? '✓ 정답' : '△ 오답 (불이익 없음)'}</Badge> : <Badge tone="info">{dead ? '구호단도 풀 수 있어요' : '정답이면 우리 나라 돈 +3'}</Badge>}>
       <p className="font-semibold text-[15px] leading-relaxed">{quiz.q}</p>
       <div className="mt-3 space-y-2">
         {quiz.choices.map((c, i) => {
@@ -105,13 +105,19 @@ export function Rules() {
   return (
     <div className="text-sm text-slate-200 leading-relaxed">
       <H>🎯 목표</H>
-      <p>다른 나라를 이기는 게임이 아닙니다. <b>여섯 나라가 모두 살아남고</b> <b>세계 평화 지수가 {WIN_PEACE} 이상</b>이면 다 함께 승리합니다.</p>
-      <p className="text-slate-300 mt-1">살아남는 조건: 마지막에 행복도 {SURVIVAL_HAPPY} 이상 + 마지막 라운드에 식량·물·에너지가 모자라지 않음.</p>
+      <p>여섯 나라가 <b>끝까지 살아남아 1위</b>를 겨룹니다. 순위는 ① 오래 살아남은 순 ② 남은 목숨 ③ 나라 점수 순으로 정합니다.</p>
+
+      <H>❤️ 목숨</H>
+      <ul className="list-disc pl-5 space-y-0.5 text-slate-300">
+        <li>모든 나라는 목숨 {START_LIVES}개로 시작합니다.</li>
+        <li>라운드가 끝나면 식량·물·에너지를 필요한 만큼 씁니다. <b className="text-white">하나라도 모자라면 목숨 −1.</b></li>
+        <li>목숨이 0이 되면 나라가 멸망하고, 다음 라운드부터 <b className="text-white">국제 구호단</b>이 됩니다. 구호단은 라운드마다 살아 있는 한 나라에 자원 {RELIEF_AMOUNT}을(를) 보낼 수 있습니다.</li>
+      </ul>
 
       <H>🔁 한 라운드에 할 일 (총 5라운드)</H>
       <ol className="list-decimal pl-5 space-y-1 text-slate-300">
-        <li><b className="text-white">부족한 자원 채우기</b> — 라운드가 끝나면 식량·물·에너지를 필요한 만큼 씁니다. 모자라면 행복도가 떨어져요(1 모자랄 때마다 −1.5, 자원마다 최대 −12). 모두 충분하면 행복도 +1. 모자란 자원은 「협상」에서 다른 나라와 거래해 채웁니다.</li>
-        <li><b className="text-white">정책 카드 1장 고르기</b> — 네 장 중 한 장만.</li>
+        <li><b className="text-white">부족한 자원 채우기</b> — 「협상」에서 다른 나라와 거래합니다. 팔지 말지, 얼마에 팔지는 각 나라의 자유입니다.</li>
+        <li><b className="text-white">정책 카드 1장 고르기</b> — 세 장 중 한 장만.</li>
         <li><b className="text-white">사건 카드에 답하기</b> — 그 라운드의 세계 사건에 참여할지 정합니다.</li>
       </ol>
 
@@ -130,18 +136,16 @@ export function Rules() {
       <H>🌐 사건 카드</H>
       <ul className="list-disc pl-5 space-y-0.5 text-slate-300">
         {[1, 2, 4].map((n) => { const p = ROUNDS[n].project!; return <li key={n}><b className="text-white">R{n} {p.name}</b> — 돈 {p.cost}을 내고 참여(신뢰도 +{n === 4 ? 4 : 3}). {p.need}개국 이상 참여하면 {p.success}.</li>; })}
-        <li><b className="text-white">R3 미르강 분쟁</b> — 그린벨트와 솔라니아가 각자 입장을 고릅니다. 둘 다 평화로운 방법을 고르면 두 나라 신뢰도 +8, 한쪽이라도 혼자 밀어붙이면 신뢰도 −15와 피해가 생깁니다. 다른 나라는 중재에 나설 수 있습니다(신뢰도 +3).</li>
-        <li><b className="text-white">R5 세계 평화 협약</b> — 조항 {CLAUSES.length}개에 찬성·반대 투표. {TREATY_RULES.clauseVotes}개국 이상 찬성한 조항이 {TREATY_RULES.minClauses}개 이상이면 채택됩니다. 채택된 조항의 효과와 신뢰도 +2는 찬성한 나라에 적용됩니다. 무산되면 모든 나라 신뢰도 −3.</li>
+        <li><b className="text-white">R3 미르강 분쟁</b> — 그린벨트와 솔라니아가 각자 입장을 고릅니다. 둘 다 평화로운 방법을 고르면 두 나라 신뢰도 +8. 혼자 밀어붙이면 물 +10을 얻지만 신뢰도 −15, 상대는 물을 잃습니다. 다른 나라는 중재에 나설 수 있습니다(신뢰도 +3).</li>
+        <li><b className="text-white">R5 세계 평화 협약</b> — 조항 {CLAUSES.length}개에 찬성·반대 투표. 살아 있는 나라의 과반이 찬성한 조항이 {TREATY_RULES.minClauses}개 이상이면 채택됩니다. 채택된 조항의 효과와 신뢰도 +2는 찬성한 나라에 적용됩니다. 무산되면 모든 나라 신뢰도 −3.</li>
+        <li>R4 재난의 피해는 그동안 세계 평균 환경이 낮을수록 커집니다. 세계 평균 환경이 45 아래면 라운드가 끝날 때마다 모든 나라가 식량·물을 3씩 잃습니다.</li>
       </ul>
 
-      <H>🕊️ 세계 평화 지수</H>
-      <p className="text-slate-300">여섯 나라의 평균 신뢰도 40% + 평균 행복도 30% + 평균 환경 15% + 나라 간 형평 15%. 형평은 가장 행복한 나라와 가장 어려운 나라의 차이가 작을수록 높습니다. 한 나라만 잘살아서는 오르지 않아요.</p>
-
-      <H>📊 나라 점수 (100점)</H>
-      <p className="text-slate-300">자원 확보 25점(모자랄 때마다 −5) + 행복도 25점 + 환경 25점 + 신뢰도 25점.</p>
+      <H>📊 나라 점수 (목숨이 같을 때 순위를 가름)</H>
+      <p className="text-slate-300">신뢰도 40% + 환경 40% + 돈(3당 1점, 최대 20점). 살아남는 것이 먼저이고, 점수는 그다음입니다.</p>
 
       <p className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/40 text-amber-100 text-xs p-3">
-        ※ 이 점수와 지수는 학습을 위한 게임 지표입니다. 실제 국제사회의 복잡한 현실을 정확하게 수치로 나타낸 것이 아닙니다. 나라와 사건은 모두 가상이며, "세계 시민 지식" 카드의 설명만 실제 사실에 바탕을 둡니다.
+        ※ 순위와 점수는 학습을 위한 게임 지표입니다. 실제 국제사회의 복잡한 현실을 정확하게 수치로 나타낸 것이 아닙니다. 나라와 사건은 모두 가상이며, "세계 시민 지식" 카드와 결과 분석의 🌍 설명만 실제 사실에 바탕을 둡니다.
       </p>
     </div>
   );

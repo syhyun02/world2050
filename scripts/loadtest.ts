@@ -97,7 +97,7 @@ ok('방끼리 상태가 섞이지 않음 (독립 게임방)');
 
 // 대표가 아닌 학생 차단
 const member = r0.students.find((c) => c.me.country === 'ARC' && c !== r0.delegates.ARC)!;
-const rej = await member.cmd('policy', { id: 'welfare' });
+const rej = await member.cmd('policy', { id: 'green' });
 assert.equal(rej.ok, false); assert.match(rej.error!, /대표만/);
 ok('같은 국가의 대표단원은 정책 실행 불가');
 
@@ -142,7 +142,7 @@ assert.equal(r0.teacher.state.players[d.me.pid].online, false);
 const back = new Client({ role: 'student', room: r0.code, token: r0.tokens.OCE0 }); await back.connect(); await sleep(200);
 assert.equal(back.me.country, 'OCE'); assert.equal(back.state.countries.OCE.delegate, back.me.pid);
 assert.equal(r0.teacher.state.players[back.me.pid].online, true);
-assert.equal((await back.cmd('policy', { id: 'welfare' })).ok, true);
+assert.equal((await back.cmd('policy', { id: 'green' })).ok, true);
 ok('접속 해제 → 재접속 후 국가·대표 권한·게임 상태 유지');
 
 // 브로드캐스트 지연 측정

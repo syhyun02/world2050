@@ -1,10 +1,11 @@
 // 국가별 활동 보고서 (인쇄 → PDF 저장). 서버에 기록된 사실과 학생이 직접 쓴 성찰만 담습니다.
 import { learnedCards } from '../../../shared/content';
-import { COUNTRIES, COUNTRY_IDS, IDX_INFO, REFLECTION_QUESTIONS, RES, RES_INFO, ROUNDS, SURVIVAL_HAPPY, WIN_PEACE } from '../../../shared/data';
+import { COUNTRIES, COUNTRY_IDS, REFLECTION_QUESTIONS, RES, RES_INFO, ROUNDS } from '../../../shared/data';
+import { diagnose } from '../../../shared/lessons';
 import { calcResults } from '../../../shared/engine';
 import type { CountryId, PublicRoom, Reflection, Room } from '../../../shared/types';
 
-const outcomeText = { win: '세계 공동 승리', partial: '부분 성공', crisis: '위기 지속' } as const;
+const lifeText = (lives: number, died: number | null) => (died !== null ? `멸망(R${died})` : `목숨 ${lives}개`);
 
 export function CountryReport({ state, id, reflections }: { state: PublicRoom; id: CountryId; reflections: Record<string, Reflection> }) {
   const d = COUNTRIES[id], c = state.countries[id];
@@ -14,7 +15,7 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
   const mine = (t: string[]) => state.log.filter((l) => t.includes(l.type) && (l.country === id || l.text.includes(d.short)));
   const actions = state.log.filter((l) => l.type === 'action' && l.country === id);
   const deals = mine(['trade']).filter((l) => l.text.includes('⇄') || l.text.includes('지원') || l.text.includes('체결'));
-  const crisis = mine(['project', 'dispute', 'treaty']);
+  const crisis = mine(['project', 'dispute', 'treaty', 'relief']);
   const agreements = state.agreements.filter((a) => a.parties.includes(id));
   const concepts = [...new Set(learnedCards(state.round, id).flatMap((k) => k.concepts))];
   const shortRounds = Object.entries(c.shortages).filter(([, v]) => v.length).map(([r, v]) => `R${r}(${v.map((k) => RES_INFO[k].name).join('·')})`);
@@ -34,7 +35,7 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
 
       <Sec t="1. 초기 국가 상황">
         <p className="text-sm">강점: {d.strength} / 약점: {d.weakness} / 외교 목표: {d.goal}</p>
-        <p className="text-sm mt-1">시작 자원 — {RES.map((k) => `${RES_INFO[k].name} ${init.stock[k]}`).join(', ')} · 행복도 {init.happy} · 환경 {init.env} · 신뢰도 {init.trust}</p>
+        <p className="text-sm mt-1">시작 자원 — {RES.map((k) => `${RES_INFO[k].name} ${init.stock[k]}`).join(', ')} · 목숨 {init.lives}개 · 환경 {init.env} · 신뢰도 {init.trust}</p>
       </Sec>
 
       <Sec t="2. 주요 정책 결정"><List items={actions.map((l) => `R${l.round}: ${l.text}`)} empty="기록된 정책 결정이 없습니다." /></Sec>
@@ -47,34 +48,31 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
 
       <Sec t="5. 최종 국가 지표">
         <table className="w-full text-sm tnum">
-          <thead><tr className="text-left"><th className="py-1">시점</th>{RES.map((k) => <th key={k}>{RES_INFO[k].name}</th>)}<th>{IDX_INFO.happy.name}</th><th>환경</th><th>신뢰도</th><th>부족</th></tr></thead>
+          <thead><tr className="text-left"><th className="py-1">시점</th>{RES.map((k) => <th key={k}>{RES_INFO[k].name}</th>)}<th>목숨</th><th>환경</th><th>신뢰도</th><th>부족</th></tr></thead>
           <tbody>
             {c.history.map((h) => (
               <tr key={h.round} className="border-t border-slate-600">
                 <td className="py-1">{h.round === 0 ? '시작' : `R${h.round} 종료`}</td>{RES.map((k) => <td key={k}>{h.stock[k]}</td>)}
-                <td>{h.happy}</td><td>{h.env}</td><td>{h.trust}</td><td>{h.shortages.map((k) => RES_INFO[k].name).join('·') || '없음'}</td>
+                <td>{h.lives}</td><td>{h.env}</td><td>{h.trust}</td><td>{h.shortages.map((k) => RES_INFO[k].name).join('·') || '없음'}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <p className="text-sm mt-2">나라 점수 <b>{my.total}점</b> = 자원 확보 {my.survival}/25 + 행복도 {my.happy}/25 + 환경 {my.env}/25 + 신뢰도 {my.trust}/25</p>
+        <p className="text-sm mt-2">{state.phase === 'finished' ? <>최종 <b>{my.rank}위</b> · </> : null}{lifeText(c.lives, c.diedRound)} · 나라 점수 {my.score}점 (신뢰도 40% + 환경 40% + 돈 최대 20점)</p>
       </Sec>
 
-      <Sec t="6. 세계 공동 성과">
-        <p className="text-sm">세계 평화 지수: {state.peaceHistory.map((h) => `${h.label} ${h.value}`).join(' → ')} (공동 승리 기준 {WIN_PEACE})</p>
-        <p className="text-sm">생존 조건 달성 국가 {res.world.survivors}/6 · 행복도 격차 {res.world.gapStart} → {res.world.gapEnd} · 성공한 공동 대응 {res.world.projects}/3 (재난 구호 {res.world.reliefSuccess ? '성공' : '실패'}) · 미르강 분쟁 {res.world.disputePeace ? '평화적 해결' : '해결 실패'} · 세계 평화 협약 {res.world.treatyAdopted ? `채택 (${res.world.treatyClauses}개 조항)` : '무산'}</p>
-        {state.phase === 'finished' && <p className="text-sm font-bold mt-1">최종 결과: {outcomeText[res.outcome]}</p>}
+      <Sec t="6. 최종 순위와 세계에 일어난 일">
+        <p className="text-sm">{state.phase === 'finished' ? `순위: ${res.ranking.map((x, i) => `${i + 1}위 ${COUNTRIES[x].short}(${lifeText(res.countries[x].lives, res.countries[x].diedRound)})`).join(' · ')}` : '순위는 게임이 끝나면 확정됩니다.'}</p>
+        <p className="text-sm">살아남은 나라 {res.world.survivors}/6 · 성공한 공동 대응 {res.world.projects}/3 (재난 구호 {res.world.reliefSuccess ? '성공' : '실패'}) · 미르강 분쟁 {{ peace: '평화적 해결', failed: '평화적 해결 실패', none: '일어나지 않음' }[res.world.dispute]} · 세계 평화 협약 {res.world.treatyAdopted ? `채택 (${res.world.treatyClauses}개 조항)` : '무산'}</p>
       </Sec>
 
       <Sec t="7. 학습한 세계 시민 교육 개념"><p className="text-sm">{concepts.join(' · ')}</p></Sec>
 
-      <Sec t="8. 협상 과정의 성과와 한계 (기록에 근거한 사실)">
-        <ul className="list-disc pl-5 text-sm space-y-0.5">
-          <li>성사된 거래·지원 {deals.length}건, 함께한 국제 약속 {agreements.length}건</li>
-          <li>필수 자원 부족: {shortRounds.length ? shortRounds.join(', ') : '없음'}</li>
-          <li>최소 생존 조건(행복도 {SURVIVAL_HAPPY} 이상, 최종 라운드 부족 없음): {state.phase === 'finished' ? (my.survived ? '달성' : '미달성') : '게임 종료 후 판정'}</li>
-          <li>신뢰도 변화 {init.trust} → {c.trust}, 환경 지속가능성 변화 {init.env} → {c.env}</li>
-        </ul>
+      <Sec t="8. 결과 분석과 현실의 교훈 (기록에 근거한 자동 분석)">
+        <p className="text-sm mb-1">성사된 거래·지원 {deals.length}건 · 함께한 국제 약속 {agreements.length}건 · 필수 자원 부족: {shortRounds.length ? shortRounds.join(', ') : '없음'} · 신뢰도 {init.trust} → {c.trust} · 환경 {init.env} → {c.env}</p>
+        {diagnose(state, id).map((f, i) => (
+          <div key={i} className="mt-1.5 text-sm"><p className="font-semibold">{f.tone === 'bad' ? '▲' : '●'} {f.title} — {f.fact}</p><p className="pl-3">{f.lesson}</p></div>
+        ))}
       </Sec>
 
       <Sec t="9. 성찰 (학생 직접 작성)">
@@ -96,10 +94,10 @@ export function CountryReport({ state, id, reflections }: { state: PublicRoom; i
 /** 교사용: CSV 내보내기 (엑셀에서 한글이 깨지지 않도록 BOM 포함) */
 export function downloadCsv(room: PublicRoom) {
   const res = room.results ?? calcResults(room as Room);
-  const rows: (string | number)[][] = [['학급', '국가', '나라 점수', '자원 확보 점수', '행복도 점수', '환경 점수', '신뢰도 점수', '생존 조건', '부족 횟수', '돈', '식량', '물', '에너지', '행복도', '환경', '신뢰도', '세계 평화 지수', '공동 결과']];
-  for (const id of COUNTRY_IDS) {
+  const rows: (string | number)[][] = [['학급', '순위', '국가', '목숨', '멸망 라운드', '나라 점수', '부족 횟수', '돈', '식량', '물', '에너지', '환경', '신뢰도', '결과 분석']];
+  for (const id of res.ranking) {
     const c = room.countries[id], r = res.countries[id];
-    rows.push([room.className, COUNTRIES[id].name, r.total, r.survival, r.happy, r.env, r.trust, r.survived ? '달성' : '미달성', r.shortageCount, ...RES.map((k) => c.stock[k]), c.happy, c.env, c.trust, room.peace, outcomeText[res.outcome]]);
+    rows.push([room.className, r.rank, COUNTRIES[id].name, c.lives, c.diedRound ?? '', r.score, r.shortageCount, ...RES.map((k) => c.stock[k]), c.env, c.trust, diagnose(room, id).map((f) => f.title).join(' / ')]);
   }
   rows.push([], ['시각', '라운드', '종류', '국가', '내용']);
   for (const l of room.log) rows.push([new Date(l.t).toLocaleTimeString('ko-KR'), l.round, l.type, l.country ? COUNTRIES[l.country].short : '', l.text]);
@@ -113,4 +111,3 @@ export function download(name: string, data: string, type: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-export { outcomeText };

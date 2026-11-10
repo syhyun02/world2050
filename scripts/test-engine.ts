@@ -1,7 +1,8 @@
 // 게임 엔진 규칙 테스트: npm test
 import assert from 'node:assert/strict';
 import { COUNTRY_IDS, RES } from '../shared/data';
-import { calcPeace, commands, joinRoom, newRoom, publicView, tick } from '../shared/engine';
+import { aliveIds, calcPeace, commands, joinRoom, newRoom, publicView, ranking, tick } from '../shared/engine';
+import { diagnose } from '../shared/lessons';
 import { GameError, type CountryId, type Room } from '../shared/types';
 
 let now = 1_000_000;
@@ -16,7 +17,7 @@ const run = (r: Room, name: string, who: CountryId | 'T', args: Record<string, u
   commands[name](r, who === 'T' ? { ...T, now } : { now, pid: `${member ? 'm' : 'd'}-${who}`, country: who }, args);
 const fails = (fn: () => void, re?: RegExp) => assert.throws(fn, (e: unknown) => e instanceof GameError && (!re || re.test(e.message)));
 const total = (r: Room, k: (typeof RES)[number]) => COUNTRY_IDS.reduce((s, id) => s + r.countries[id].stock[k], 0);
-const noNeg = (r: Room) => { for (const id of COUNTRY_IDS) { const c = r.countries[id]; for (const k of RES) assert.ok(c.stock[k] >= 0, `${id}.${k} 음수`); for (const k of ['happy', 'env', 'trust'] as const) assert.ok(c[k] >= 0 && c[k] <= 100); } };
+const noNeg = (r: Room) => { for (const id of COUNTRY_IDS) { const c = r.countries[id]; for (const k of RES) assert.ok(c.stock[k] >= 0, `${id}.${k} 음수`); for (const k of ['env', 'trust'] as const) assert.ok(c[k] >= 0 && c[k] <= 100); assert.ok(c.lives >= 0 && c.lives <= 2); } };
 let n = 0;
 const test = (name: string, fn: () => void) => { fn(); n++; console.log(`  ✓ ${name}`); };
 
@@ -45,7 +46,8 @@ test('정책 카드: 라운드마다 1장, 비용 차감, 돈 부족 시 불가'
   assert.equal(c.stock.eco, eco - 8); assert.equal(c.prod.energy, prod + 4); assert.equal(c.env, env - 3);
   fails(() => run(r, 'policy', 'IND', { id: 'green' }), /이미 골랐습니다/);
   const nov = r.countries.NOV; nov.stock.eco = 3;
-  fails(() => run(r, 'policy', 'NOV', { id: 'welfare' }), /돈이 부족/);
+  fails(() => run(r, 'policy', 'NOV', { id: 'green' }), /돈이 부족/);
+  fails(() => run(r, 'policy', 'NOV', { id: 'welfare' }), /알 수 없는/);
   assert.equal(nov.stock.eco, 3); assert.equal(nov.policy, null);
   now += 1000; run(r, 'endRound', 'T'); run(r, 'nextRound', 'T');
   run(r, 'policy', 'IND', { id: 'green' }); // 다음 라운드에는 다시 1장
@@ -120,15 +122,52 @@ test('퀴즈: 1인 1회, 정답 시 국가당 1회 보너스, 오답 불이익 �
   run(r, 'quiz', 'ARC', { choice: 1 }); assert.equal(r.countries.ARC.stock.eco, eco + 3);
   joinRoom(r, 'ARC', 'x', 'x', now); commands.quiz(r, { now, pid: 'x', country: 'ARC' }, { choice: 1 }); assert.equal(r.countries.ARC.stock.eco, eco + 3);
 });
-test('협약: 조항은 4개국 이상 찬성, 3개 조항 이상이면 채택, 찬성국에만 적용', () => {
+test('협약: 살아 있는 나라의 과반 찬성, 3개 조항 이상이면 채택', () => {
   const r = mk(); run(r, 'start', 'T');
-  for (let i = 1; i < 5; i++) { now += 1000; run(r, 'endRound', 'T'); run(r, 'nextRound', 'T'); }
+  for (let i = 1; i < 5; i++) { for (const id of COUNTRY_IDS) for (const k of ['food', 'water', 'energy'] as const) r.countries[id].stock[k] = 99; now += 1000; run(r, 'endRound', 'T'); run(r, 'nextRound', 'T'); }
   fails(() => run(r, 'treatyVote', 'ARC', { clause: 'nope', yes: true }));
-  for (const id of COUNTRY_IDS) for (const cl of ['climate', 'peace', 'sdg']) run(r, 'treatyVote', id, { clause: cl, yes: id !== 'IND' });
-  const ind = r.countries.IND.env, arc = r.countries.ARC.trust;
+  for (const id of aliveIds(r)) for (const cl of ['climate', 'peace', 'sdg']) run(r, 'treatyVote', id, { clause: cl, yes: true });
   now += 1000; run(r, 'endRound', 'T');
   assert.equal(r.treaty!.result!.adopted, true); assert.equal(r.results!.world.treatyClauses, 3);
-  assert.ok(r.countries.ARC.trust > arc); assert.ok(r.countries.IND.env <= ind);
+});
+
+test('목숨: 자원이 모자라면 −1, 두 번이면 멸망, 멸망국은 행동 불가', () => {
+  const r = mk(); run(r, 'start', 'T');
+  const fill = () => { for (const id of COUNTRY_IDS) for (const k of ['food', 'water', 'energy'] as const) r.countries[id].stock[k] = 99; };
+  fill(); r.countries.ARC.stock.energy = 0; r.countries.ARC.stock.food = 0;
+  now += 1000; run(r, 'endRound', 'T');
+  assert.equal(r.countries.ARC.lives, 1); assert.equal(r.countries.SOL.lives, 2); assert.equal(r.countries.ARC.diedRound, null);
+  run(r, 'nextRound', 'T'); fill(); r.countries.ARC.stock.water = 0;
+  run(r, 'propose', 'SOL', { to: 'ARC', give: { water: 1 } }); // 대기 중인 제안
+  now += 1000; run(r, 'endRound', 'T');
+  assert.equal(r.countries.ARC.lives, 0); assert.equal(r.countries.ARC.diedRound, 2); assert.deepEqual(aliveIds(r).includes('ARC'), false);
+  run(r, 'nextRound', 'T'); fill();
+  const stock = JSON.stringify(r.countries.ARC.stock);
+  fails(() => run(r, 'policy', 'ARC', { id: 'green' }), /구호단/);
+  fails(() => run(r, 'propose', 'ARC', { to: 'SOL', give: { eco: 1 } }), /구호단/);
+  fails(() => run(r, 'propose', 'SOL', { to: 'ARC', give: { eco: 1 } }), /멸망한 나라/);
+  fails(() => run(r, 'mediate', 'ARC'), /구호단/);
+  assert.equal(JSON.stringify(r.countries.ARC.stock), stock); // 멸망국은 생산도 소비도 없음
+  assert.equal(ranking(r).at(-1), 'ARC');
+});
+test('국제 구호단: 멸망국만, 라운드마다 한 번, 살아 있는 나라에만', () => {
+  const r = mk(); run(r, 'start', 'T');
+  fails(() => run(r, 'relief', 'ARC', { to: 'SOL', res: 'water' }), /구호단/);
+  r.countries.ARC.lives = 0; r.countries.ARC.diedRound = 1; r.countries.GRN.lives = 0; r.countries.GRN.diedRound = 1;
+  const w = r.countries.SOL.stock.water;
+  fails(() => run(r, 'relief', 'ARC', { to: 'GRN', res: 'water' }), /살아 있는/);
+  fails(() => run(r, 'relief', 'ARC', { to: 'SOL', res: 'eco' }), /자원을 고르세요/);
+  fails(() => run(r, 'relief', 'ARC', { to: 'SOL', res: 'water' }, true), /대표만/);
+  run(r, 'relief', 'ARC', { to: 'SOL', res: 'water' }); assert.equal(r.countries.SOL.stock.water, w + 3);
+  fails(() => run(r, 'relief', 'ARC', { to: 'SOL', res: 'water' }), /이미 보냈습니다/);
+  now += 1000; run(r, 'endRound', 'T'); run(r, 'nextRound', 'T');
+  run(r, 'relief', 'ARC', { to: 'SOL', res: 'food' }); // 다음 라운드에 다시 가능
+});
+test('노바리아 성장: 라운드마다 수입 +2', () => {
+  const r = mk(); run(r, 'start', 'T');
+  const p0 = r.countries.NOV.prod.eco, a0 = r.countries.ARC.prod.eco;
+  for (let i = 1; i < 5; i++) { for (const id of COUNTRY_IDS) for (const k of ['food', 'water', 'energy'] as const) r.countries[id].stock[k] = 99; now += 1000; run(r, 'endRound', 'T'); run(r, 'nextRound', 'T'); }
+  assert.equal(r.countries.NOV.prod.eco, p0 + 8); assert.equal(r.countries.ARC.prod.eco, a0);
 });
 
 // ── 전체 플레이 시뮬레이션 ──
@@ -153,21 +192,23 @@ function play(mode: 'solo' | 'mixed' | 'coop'): Room {
           }
         }
       }
-      if (r.project) for (const id of COUNTRY_IDS) tryRun('joinProject', id);
-      if (rd === 3) { run(r, 'stance', 'GRN', { stance: 'negotiate' }); run(r, 'stance', 'SOL', { stance: 'mediate' }); run(r, 'mediate', 'OCE'); run(r, 'mediate', 'NOV'); }
-      if (rd === 5) for (const id of COUNTRY_IDS) for (const cl of ['climate', 'coop', 'peace', 'support', 'sdg']) run(r, 'treatyVote', id, { clause: cl, yes: true });
-      for (const id of COUNTRY_IDS) tryRun('policy', id, { id: r.countries[id].env < 50 ? 'green' : 'welfare' });
+      if (r.project) for (const id of aliveIds(r)) tryRun('joinProject', id);
+      if (r.dispute) { run(r, 'stance', 'GRN', { stance: 'negotiate' }); run(r, 'stance', 'SOL', { stance: 'mediate' }); tryRun('mediate', 'OCE'); tryRun('mediate', 'NOV'); }
+      if (rd === 5) for (const id of aliveIds(r)) for (const cl of ['climate', 'coop', 'peace', 'support', 'sdg']) run(r, 'treatyVote', id, { clause: cl, yes: true });
+      for (const id of aliveIds(r)) tryRun('policy', id, { id: 'green' });
     } else if (mode === 'mixed') {
       // 현실적인 학급: 에너지만 일부 거래, 공동 대응은 절반만 참여, 협약은 일부 반대
-      for (const id of ['ARC', 'IND'] as CountryId[]) { const c = r.countries[id]; const lack = c.need.energy - c.stock.energy; if (lack > 0) tr(id, 'SOL', { eco: Math.min(c.stock.eco, lack) }, { energy: lack }); }
+      // 경쟁: 솔라니아는 아르카디아에만 에너지를 팔고 인더스트리아에는 팔지 않음. 물은 오세아나에서 삼
+      { const c = r.countries.ARC; const lack = c.need.energy - c.stock.energy; if (lack > 0) tr('ARC', 'SOL', { eco: Math.min(c.stock.eco, lack * 2) }, { energy: lack }); }
       const sol = r.countries.SOL; if (sol.stock.water < sol.need.water) tr('SOL', 'OCE', { eco: 5 }, { water: sol.need.water - sol.stock.water });
+      for (const id of COUNTRY_IDS) if (!aliveIds(r).includes(id)) tryRun('relief', id, { to: 'NOV', res: 'food' });
       if (r.project) for (const id of ['ARC', 'GRN', 'OCE', 'SOL'] as CountryId[]) if (rd !== 2 || id !== 'SOL') tryRun('joinProject', id);
-      if (rd === 3) { run(r, 'stance', 'GRN', { stance: 'negotiate' }); run(r, 'stance', 'SOL', { stance: 'negotiate' }); }
-      if (rd === 5) for (const id of COUNTRY_IDS) for (const cl of ['climate', 'peace', 'sdg', 'support']) run(r, 'treatyVote', id, { clause: cl, yes: !(id === 'IND' && cl === 'climate') && !(id === 'SOL' && cl === 'support') });
-      for (const id of COUNTRY_IDS) tryRun('policy', id, id === 'IND' ? { id: rd % 2 ? 'green' : 'invest', pick: 'energy' } : { id: 'welfare' });
+      if (r.dispute) { run(r, 'stance', 'GRN', { stance: 'negotiate' }); run(r, 'stance', 'SOL', { stance: 'negotiate' }); }
+      if (rd === 5) for (const id of aliveIds(r)) for (const cl of ['climate', 'peace', 'sdg', 'support']) run(r, 'treatyVote', id, { clause: cl, yes: id !== 'SOL' });
+      for (const id of aliveIds(r)) tryRun('policy', id, id === 'IND' ? { id: 'invest', pick: 'energy' } : { id: 'emergency', pick: (['energy', 'water', 'food'] as const).find((k) => r.countries[id].stock[k] < r.countries[id].need[k]) ?? 'food' });
     } else {
-      if (rd === 3) { run(r, 'stance', 'GRN', { stance: 'unilateral' }); run(r, 'stance', 'SOL', { stance: 'unilateral' }); }
-      for (const id of COUNTRY_IDS) tryRun('policy', id, { id: 'emergency', pick: id === 'SOL' ? 'water' : 'energy' });
+      if (r.dispute) { run(r, 'stance', 'GRN', { stance: 'unilateral' }); run(r, 'stance', 'SOL', { stance: 'unilateral' }); }
+      for (const id of aliveIds(r)) tryRun('policy', id, { id: 'emergency', pick: id === 'SOL' ? 'water' : 'energy' });
     }
     noNeg(r);
     now += 10_000; run(r, 'endRound', 'T'); noNeg(r);
@@ -177,10 +218,11 @@ function play(mode: 'solo' | 'mixed' | 'coop'): Room {
 }
 for (const mode of ['solo', 'mixed', 'coop'] as const) {
   const r = play(mode); const res = r.results!;
-  console.log(`\n[${mode === 'solo' ? '각자도생' : mode === 'mixed' ? '부분 협력' : '협력'} 시나리오] 평화 지수 ${r.peaceHistory.map((p) => p.value).join(' → ')} · 결과: ${res.outcome} · 생존 ${res.world.survivors}/6`);
-  for (const id of COUNTRY_IDS) { const c = r.countries[id], s = res.countries[id]; console.log(`  ${id} 점수 ${String(s.total).padStart(3)} 행복 ${c.happy} 환경 ${c.env} 신뢰 ${c.trust} 경제 ${c.stock.eco} 부족 ${s.shortageCount}회 ${s.survived ? '생존' : '위기'}`); }
-  if (mode === 'solo') assert.equal(res.outcome, 'crisis', '협력 없이는 위기가 지속되어야 함');
-  else if (mode === 'coop') assert.equal(res.outcome, 'win', '협력하면 공동 승리가 가능해야 함');
-  assert.equal(calcPeace(r).value, r.peace);
+  console.log(`\n[${mode === 'solo' ? '각자도생' : mode === 'mixed' ? '선택적 거래(경쟁)' : '모두 거래'} 시나리오] 살아남은 나라 ${res.world.survivors}/6 · 순위: ${res.ranking.join(' > ')}`);
+  for (const id of res.ranking) { const c = r.countries[id], s = res.countries[id]; console.log(`  ${s.rank}위 ${id} ${'♥'.repeat(c.lives) || '멸망(R' + c.diedRound + ')'} 점수 ${s.score} 환경 ${c.env} 신뢰 ${c.trust} 돈 ${c.stock.eco} · ${diagnose(publicView(r), id).map((f) => f.title).join(' / ')}`); }
+  if (mode === 'solo') assert.ok(res.world.survivors <= 3, '거래 없이는 여러 나라가 멸망해야 함');
+  if (mode === 'coop') assert.equal(res.world.survivors, 6, '모두 거래하면 전원 생존이 가능해야 함');
+  assert.equal(calcPeace(r).value, r.peace); assert.deepEqual(res.ranking, ranking(r));
+  for (const id of COUNTRY_IDS) assert.ok(diagnose(publicView(r), id).length > 0);
 }
 console.log(`\n모든 테스트 통과 (${n}개 + 시뮬레이션 3종)`);

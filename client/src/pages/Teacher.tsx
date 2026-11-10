@@ -1,9 +1,10 @@
 // 교사용 관리자 대시보드
 import { useCallback, useEffect, useState } from 'react';
-import { COUNTRIES, COUNTRY_IDS, POLICIES, RES, RES_INFO, ROUNDS, TEACHER_EVENTS, VITALS, WIN_PEACE } from '../../../shared/data';
+import { COUNTRIES, COUNTRY_IDS, POLICIES, RES, RES_INFO, ROUNDS, TEACHER_EVENTS, VITALS } from '../../../shared/data';
 import type { CountryId, PublicRoom, Reflection, Results, Room } from '../../../shared/types';
 import { Rules } from '../components/Learn';
-import { CountryReport, download, downloadCsv, outcomeText } from '../components/Report';
+import { aliveIds, projectInfo } from '../../../shared/engine';
+import { CountryReport, download, downloadCsv } from '../components/Report';
 import { AgreementList, CountryTable, NewsFeed, PeaceGauge } from '../components/World';
 import { api, fmtTime, nav, teacherAuth, useRemaining, useRoom } from '../lib/net';
 import { Badge, Btn, ConnBadge, CountryTag, cx, Panel, phaseLabel, useAction, useToast } from '../lib/ui';
@@ -45,7 +46,7 @@ function Login({ onDone }: { onDone: (t: string) => void }) {
 function RoomList({ token, logout }: { token: string; logout: () => void }) {
   const [rooms, setRooms] = useState<Summary[] | null>(null);
   const [name, setName] = useState('');
-  const [minutes, setMinutes] = useState(12);
+  const [minutes, setMinutes] = useState(5);
   const toast = useToast();
   const load = useCallback(async () => {
     try { setRooms((await api<{ rooms: Summary[] }>('/teacher/rooms', { token })).rooms); }
@@ -74,7 +75,7 @@ function RoomList({ token, logout }: { token: string; logout: () => void }) {
           <label className="text-sm">학급 이름<input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} placeholder="예: 2학년 3반" required className="block mt-1 rounded-lg bg-ink-950/60 border border-line px-3 py-2 w-48" /></label>
           <label className="text-sm">라운드당 시간
             <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className="block mt-1 rounded-lg bg-ink-950/60 border border-line px-3 py-2">
-              {[6, 8, 10, 12, 15, 18, 20].map((m) => <option key={m} value={m}>{m}분 (전체 약 {m * 5 + 10}분)</option>)}
+              {[3, 4, 5, 6, 8, 10].map((m) => <option key={m} value={m}>{m}분 (전체 약 {m * 5 + 15}분)</option>)}
             </select>
           </label>
           <Btn type="submit">게임방 만들기</Btn>
@@ -91,7 +92,7 @@ function RoomList({ token, logout }: { token: string; logout: () => void }) {
                   <div><div className="font-bold text-lg">{r.className}</div><div className="text-xs text-slate-400">방 코드 <b className="text-sky-200 tracking-widest text-sm">{r.code}</b></div></div>
                   <Badge tone={r.phase === 'finished' ? 'good' : r.phase === 'lobby' ? 'mute' : 'warn'}>{phaseLabel(r as unknown as PublicRoom)}</Badge>
                 </div>
-                <div className="text-xs text-slate-300 mt-2">참가 {r.players}명 (접속 {r.online}명) · 평화 지수 {r.peace} · 라운드 {Math.round(r.durationSec / 60)}분</div>
+                <div className="text-xs text-slate-300 mt-2">참가 {r.players}명 (접속 {r.online}명) · 라운드 {Math.round(r.durationSec / 60)}분</div>
                 <div className="flex gap-2 mt-3">
                   <Btn small onClick={() => nav(`/teacher/${r.code}`)}>관리 화면 열기</Btn>
                   <Btn small tone="ghost" onClick={() => window.open(`/board/${r.code}`, '_blank')}>전자칠판 화면</Btn>
@@ -107,23 +108,22 @@ function RoomList({ token, logout }: { token: string; logout: () => void }) {
         {done.length === 0 ? <p className="text-sm text-slate-400">게임을 마친 학급이 생기면 이곳에서 결과를 비교할 수 있습니다.</p> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm tnum min-w-[640px]">
-              <thead><tr className="text-left text-slate-400 text-xs"><th className="py-1.5">학급</th><th>결과</th><th>평화 지수</th><th>생존 국가</th><th>행복도 격차</th><th>공동 대응</th><th>분쟁</th><th>협약</th><th>평균 나라 점수</th></tr></thead>
+              <thead><tr className="text-left text-slate-400 text-xs"><th className="py-1.5">학급</th><th>1위</th><th>살아남은 나라</th><th>멸망한 나라</th><th>공동 대응</th><th>분쟁</th><th>협약</th></tr></thead>
               <tbody>
                 {done.map((r) => {
                   const w = r.results!.world;
-                  const avg = Math.round(COUNTRY_IDS.reduce((s, id) => s + r.results!.countries[id].total, 0) / 6);
                   return (
                     <tr key={r.code} className="border-t border-line/60">
                       <td className="py-2 font-semibold">{r.className}</td>
-                      <td><Badge tone={r.results!.outcome === 'win' ? 'good' : r.results!.outcome === 'partial' ? 'warn' : 'bad'}>{outcomeText[r.results!.outcome]}</Badge></td>
-                      <td>{w.peaceStart} → <b>{w.peace}</b></td><td>{w.survivors}/6</td><td>{w.gapStart} → {w.gapEnd}</td><td>{w.projects}/3</td><td>{w.disputePeace ? '평화적 해결' : '실패'}</td>
-                      <td>{w.treatyAdopted ? `채택 (${w.treatyClauses}조항)` : '무산'}</td><td>{avg}</td>
+                      <td><CountryTag id={r.results!.ranking[0]} /></td>
+                      <td>{w.survivors}/6</td><td>{COUNTRY_IDS.filter((id) => r.results!.countries[id].diedRound !== null).map((id) => `${COUNTRIES[id].short}(R${r.results!.countries[id].diedRound})`).join(', ') || '없음'}</td><td>{w.projects}/3</td><td>{{ peace: '평화적 해결', failed: '실패', none: '일어나지 않음' }[w.dispute]}</td>
+                      <td>{w.treatyAdopted ? `채택 (${w.treatyClauses}조항)` : '무산'}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-            <p className="text-[11px] text-slate-500 mt-2">※ 학급 간 우열을 가리기보다, 어떤 선택이 다른 결과로 이어졌는지 토의하는 자료로 활용하세요.</p>
+            <p className="text-[11px] text-slate-500 mt-2">※ 학급마다 어떤 나라가 왜 무너졌는지 비교하며 토의하는 자료로 활용하세요.</p>
           </div>
         )}
       </Panel>
@@ -181,11 +181,11 @@ function RoomDash({ code, token, logout }: { code: string; token: string; logout
             )}
             {state.phase === 'finished' && <Btn onClick={() => setTab('report')}>📊 결과와 보고서 보기</Btn>}
           </div>
-          <p className="text-xs text-slate-400 mt-2">{next?.hint ?? (state.phase === 'running' ? '제한 시간이 끝나면 자동으로 결산됩니다. 학생들이 서로 찾아가 협상하도록 안내하세요.' : state.phase === 'finished' ? '게임이 끝났습니다. 학생들에게 "보고서" 탭에서 성찰을 작성하도록 안내하세요.' : '')}</p>
+          <p className="text-xs text-slate-400 mt-2">{next?.hint ?? (state.phase === 'running' ? '제한 시간이 끝나면 자동으로 결산됩니다. 자원이 모자란 나라는 목숨을 잃습니다. 서로 찾아가 협상하도록 안내하세요.' : state.phase === 'finished' ? '게임이 끝났습니다. 전자칠판의 순위와 결과 분석으로 토의한 뒤, 학생들에게 성찰을 작성하도록 안내하세요.' : '')}</p>
         </div>
         <div className="flex items-center gap-5 justify-between">
           <div className="text-center"><div className="text-xs text-slate-400">남은 시간</div><div className={cx('text-4xl font-extrabold tnum', remaining !== null && remaining < 60000 && 'text-rose-300')}>{fmtTime(remaining)}</div></div>
-          <div className="text-center"><div className="text-xs text-slate-400">평화 지수 (기준 {WIN_PEACE})</div><div className="text-4xl font-extrabold tnum">{state.peace}</div></div>
+          <div className="text-center"><div className="text-xs text-slate-400">살아남은 나라</div><div className="text-4xl font-extrabold tnum">{aliveIds(state).length}<span className="text-lg text-slate-400">/6</span></div></div>
           <div className="text-center"><div className="text-xs text-slate-400">접속</div><div className="text-4xl font-extrabold tnum">{players.filter((p) => p.online).length}<span className="text-lg text-slate-400">/{players.length}</span></div></div>
         </div>
       </section>
@@ -200,7 +200,7 @@ function RoomDash({ code, token, logout }: { code: string; token: string; logout
         <div className="grid lg:grid-cols-[1.5fr_1fr] gap-3">
           <div className="space-y-3">
             <Panel title="📊 국가별 자원과 지표 (실시간)"><CountryTable state={state} /><CountryExtras state={state} /></Panel>
-            {state.project && <Panel title={`🌐 공동 대응: ${ROUNDS[state.round].project!.name}`}><p className="text-sm">참여 <b className="tnum">{state.project.joined.length} / {ROUNDS[state.round].project!.need}개국</b> — {state.project.joined.map((id) => COUNTRIES[id].short).join(', ') || '아직 참여국 없음'}</p></Panel>}
+            {state.project && <Panel title={`🌐 공동 대응: ${ROUNDS[state.round].project!.name}`}><p className="text-sm">참여 <b className="tnum">{state.project.joined.length} / {projectInfo(state).need}개국</b> — {state.project.joined.map((id) => COUNTRIES[id].short).join(', ') || '아직 참여국 없음'}</p></Panel>}
             {state.dispute && <Panel title="⚖️ 미르강 분쟁"><p className="text-sm">입장 확정: {state.dispute.parties.map((id) => `${COUNTRIES[id].short} ${state.dispute!.stances[id] ? '✓' : '미정'}`).join(' · ')} / 중재국: {state.dispute.mediators.map((m) => COUNTRIES[m].short).join(', ') || '없음'}</p>{state.dispute.resultText && <p className="text-sm text-slate-300 mt-1">{state.dispute.resultText}</p>}</Panel>}
             {state.quizStats[state.round] && <Panel title="🧠 이번 라운드 퀴즈"><p className="text-sm">응답 {state.quizStats[state.round].answered}명 · 정답 {state.quizStats[state.round].correct}명</p></Panel>}
           </div>
@@ -291,7 +291,7 @@ function CountryExtras({ state }: { state: PublicRoom }) {
             const del = c.delegate ? state.players[c.delegate] : null;
             return (
               <tr key={id} className="border-t border-line/60">
-                <td className="py-1.5"><CountryTag id={id} /></td><td>{c.policy ? `✓ ${POLICIES.find((x) => x.id === c.policy!.id)?.name ?? ''}` : state.phase === 'running' ? <span className="text-amber-300">미선택</span> : '—'}</td><td>{RES.map((k) => c.prod[k]).join(' / ')}</td>
+                <td className="py-1.5"><CountryTag id={id} /></td><td>{c.diedRound !== null ? (c.reliefDone ? '구호 지원 완료' : '국제 구호단') : c.policy ? `✓ ${POLICIES.find((x) => x.id === c.policy!.id)?.name ?? ''}` : state.phase === 'running' ? <span className="text-amber-300">미선택</span> : '—'}</td><td>{RES.map((k) => c.prod[k]).join(' / ')}</td>
                 <td className={lack.length ? 'text-rose-300' : 'text-slate-400'}>{lack.map((k) => `${RES_INFO[k].name} −${c.need[k] - c.stock[k]}`).join(', ') || '없음'}</td>
                 <td>{del ? <span className={del.online ? '' : 'text-rose-300'}>{del.nick}{del.online ? '' : ' (접속 끊김)'}</span> : <span className="text-rose-300">없음</span>}</td>
               </tr>
@@ -339,7 +339,7 @@ function Tools({ state, code, token, snapshots, cmd }: { state: PublicRoom; code
     <div className="grid md:grid-cols-2 gap-3">
       <Panel title="⏱ 라운드 제한 시간">
         <div className="flex flex-wrap gap-2">
-          {[6, 8, 10, 12, 15, 18, 20].map((m) => <Btn key={m} small tone={state.durationSec === m * 60 ? 'primary' : 'ghost'} disabled={busy} onClick={() => run('setDuration', { sec: m * 60 }, `다음 라운드부터 ${m}분으로 진행합니다.`)}>{m}분</Btn>)}
+          {[3, 4, 5, 6, 8, 10].map((m) => <Btn key={m} small tone={state.durationSec === m * 60 ? 'primary' : 'ghost'} disabled={busy} onClick={() => run('setDuration', { sec: m * 60 }, `다음 라운드부터 ${m}분으로 진행합니다.`)}>{m}분</Btn>)}
         </div>
         <p className="text-xs text-slate-400 mt-2">다음에 시작하는 라운드부터 적용됩니다. 진행 중인 라운드는 위쪽의 +1분 / −1분으로 조절하세요.</p>
       </Panel>
@@ -353,7 +353,7 @@ function Tools({ state, code, token, snapshots, cmd }: { state: PublicRoom; code
         <div className="flex flex-wrap items-end gap-2">
           <select value={country} onChange={(e) => setCountry(e.target.value as CountryId)} className="rounded-lg bg-ink-950/60 border border-line px-2 py-2 text-sm" aria-label="국가">{COUNTRY_IDS.map((id) => <option key={id} value={id}>{COUNTRIES[id].short}</option>)}</select>
           <select value={key} onChange={(e) => setKey(e.target.value)} className="rounded-lg bg-ink-950/60 border border-line px-2 py-2 text-sm" aria-label="항목">
-            {RES.map((k) => <option key={k} value={k}>{RES_INFO[k].name}</option>)}<option value="happy">행복도</option><option value="env">환경</option><option value="trust">신뢰도</option>
+            {RES.map((k) => <option key={k} value={k}>{RES_INFO[k].name}</option>)}<option value="lives">목숨</option><option value="env">환경</option><option value="trust">신뢰도</option>
           </select>
           <input type="number" value={delta} onChange={(e) => setDelta(Number(e.target.value))} className="w-20 rounded-lg bg-ink-950/60 border border-line px-2 py-2 text-sm" aria-label="변화량" />
           <Btn small tone="ghost" disabled={busy} onClick={() => run('adjust', { country, key, delta: Math.round(delta) }, '조정했습니다. 활동 기록에 남습니다.')}>적용</Btn>

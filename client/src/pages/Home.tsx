@@ -23,7 +23,7 @@ export default function Home() {
         <div className="text-center mb-5">
           <p className="text-xs tracking-[0.35em] text-sky-300">세계 평화 협상 시뮬레이터</p>
           <h1 className="text-5xl font-extrabold tracking-tight mt-1">WORLD <span className="text-sky-400">2050</span></h1>
-          <p className="text-sm text-slate-300 mt-2">2050년, 여섯 나라의 대표가 되어 협상으로 세계의 위기를 풀어 보세요.</p>
+          <p className="text-sm text-slate-300 mt-2">2050년, 여섯 나라가 살아남기를 겨룹니다. 목숨은 단 2개!</p>
           <div className="flex justify-center gap-2 mt-3 text-2xl" aria-hidden>{COUNTRY_IDS.map((id) => <span key={id} title={COUNTRIES[id].name}>{COUNTRIES[id].icon}</span>)}</div>
         </div>
 

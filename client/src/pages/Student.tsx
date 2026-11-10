@@ -2,16 +2,17 @@
 // 한 라운드에 할 일은 세 가지: ① 부족한 자원 채우기(협상) ② 정책 카드 1장 ③ 사건 카드
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CLAUSES, COUNTRIES, COUNTRY_IDS, IDX_INFO, POLICIES, REFLECTION_QUESTIONS, RES, RES_INFO, ROUNDS, STANCES,
-  SURVIVAL_HAPPY, TREATY_RULES, VITALS, WIN_PEACE,
+  CLAUSES, COUNTRIES, COUNTRY_IDS, IDX_INFO, POLICIES, REFLECTION_QUESTIONS, RELIEF_AMOUNT, RES, RES_INFO, ROUNDS, STANCES,
+  START_LIVES, TREATY_RULES, VITALS,
 } from '../../../shared/data';
-import { lacking, tallyTreaty } from '../../../shared/engine';
+import { aliveIds, countryScore, lacking, projectInfo, ranking, tallyTreaty } from '../../../shared/engine';
+import { diagnose } from '../../../shared/lessons';
 import type { CountryId, MeInfo, Proposal, PublicRoom, ResBundle, Stance, Vital } from '../../../shared/types';
 import { KnowledgeDock, QuizPanel, Rules } from '../components/Learn';
-import { CountryReport, outcomeText } from '../components/Report';
+import { CountryReport } from '../components/Report';
 import { AgreementList, BreakingBanner, CountryTable, NewsFeed, PeaceBreakdown, PeaceGauge, WorldMap } from '../components/World';
 import { fmtTime, nav, session, useRemaining, useRoom } from '../lib/net';
-import { Badge, Bar, Btn, BundleText, ConnBadge, CountryTag, cx, Panel, phaseLabel, ResPicker, useAction, useToast } from '../lib/ui';
+import { Badge, Bar, Btn, BundleText, ConnBadge, CountryTag, cx, Hearts, Panel, phaseLabel, ResPicker, useAction, useToast } from '../lib/ui';
 
 type Cmd = (name: string, args?: Record<string, unknown>) => Promise<void>;
 interface Draft { to: CountryId; give: ResBundle; take: ResBundle }
@@ -46,6 +47,7 @@ export default function Student() {
   const c = state.countries[me.country];
   const d = COUNTRIES[me.country];
   const isDelegate = c.delegate === me.pid;
+  const dead = c.diedRound !== null;
   const canAct = state.phase === 'running' && isDelegate;
   const p: P = { state, me, cmd: conn.cmd, isDelegate, canAct };
   const incoming = state.proposals.filter((x) => x.to === me.country && x.status === 'pending').length;
@@ -54,7 +56,7 @@ export default function Student() {
   const askHelp = (k: Vital) => {
     // 그 자원이 가장 많이 남는 나라를 상대로, 부족한 만큼을 돈과 바꾸는 제안을 미리 채워 둠
     const lack = c.need[k] - c.stock[k];
-    const best = COUNTRY_IDS.filter((id) => id !== me.country).sort((a, b) => (state.countries[b].stock[k] - state.countries[b].need[k]) - (state.countries[a].stock[k] - state.countries[a].need[k]))[0];
+    const best = aliveIds(state).filter((id) => id !== me.country).sort((a, b) => (state.countries[b].stock[k] - state.countries[b].need[k]) - (state.countries[a].stock[k] - state.countries[a].need[k]))[0];
     setDraft({ to: best, give: { eco: Math.min(c.stock.eco, lack) }, take: { [k]: lack } });
     setView('deal');
   };
@@ -66,7 +68,7 @@ export default function Student() {
           <div className="flex items-center gap-2">
             <span className="text-2xl" aria-hidden>{d.icon}</span>
             <div className="min-w-0 flex-1">
-              <div className="font-bold truncate leading-tight" style={{ color: d.color }}>{d.name}</div>
+              <div className="font-bold truncate leading-tight" style={{ color: d.color }}>{d.name} <span className="text-sm"><Hearts lives={c.lives} dead={dead} /></span></div>
               <div className="text-[11px] text-slate-300 truncate">{phaseLabel(state)}{state.round >= 1 && state.phase !== 'finished' ? ` · ${ROUNDS[state.round].crisis}` : ''}</div>
             </div>
             <div className="text-right shrink-0">
@@ -93,6 +95,9 @@ export default function Student() {
         <BreakingBanner state={state} />
         {status !== 'online' && <div className="no-print rounded-xl bg-rose-950 border border-rose-500 px-4 py-2 text-sm">⚠ 서버와 연결이 끊겼습니다. 자동으로 다시 연결하는 중입니다. 게임 진행 상황은 서버에 저장되어 있습니다.</div>}
         {state.phase === 'paused' && <div className="no-print rounded-xl bg-amber-950 border border-amber-500 px-4 py-2 text-sm">⏸ 선생님이 게임을 잠시 멈췄습니다. 안내를 들어 주세요.</div>}
+        {dead && state.phase !== 'finished' && view !== 'report' && view !== 'help' && (
+          <div className="no-print rounded-xl bg-slate-800 border border-slate-500 px-4 py-2.5 text-sm">💀 우리 나라는 ROUND {c.diedRound}에 멸망했습니다. 이제 <b>국제 구호단</b>으로서 라운드마다 한 나라를 도울 수 있습니다.</div>
+        )}
         {!isDelegate && state.phase !== 'finished' && (view === 'home' || view === 'deal') && (
           <div className="no-print rounded-xl bg-ink-800 border border-line px-4 py-2 text-xs text-slate-300">
             👀 나는 <b>대표단원</b>입니다. 버튼은 국가 대표만 누를 수 있어요. 화면을 함께 보며 대표와 의논하고, 퀴즈는 직접 풀어 보세요.
@@ -140,7 +145,8 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
   const delegate = c.delegate ? state.players[c.delegate] : null;
   const def = ROUNDS[state.round];
   const prev = c.history[c.history.length - 1];
-  const live = state.phase === 'running' || state.phase === 'paused';
+  const dead = c.diedRound !== null;
+  const live = (state.phase === 'running' || state.phase === 'paused') && !dead;
   const lack = live ? lacking(state, me.country) : [];
   const ev = eventStatus(state, me.country);
   const chosen = c.policy ? POLICIES.find((x) => x.id === c.policy!.id) : null;
@@ -158,10 +164,11 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
       {state.phase === 'lobby' && (
         <Panel title="🛬 대기실 — 곧 게임이 시작됩니다">
           <p className="text-sm text-slate-200">여러분은 2050년 <b style={{ color: d.color }}>{d.name}</b>의 대표단입니다.</p>
-          <p className="text-sm mt-2 rounded-lg bg-sky-500/10 border border-sky-500/30 px-3 py-2">🎯 <b>목표</b>: 여섯 나라가 모두 살아남고, 세계 평화 지수를 {WIN_PEACE} 이상으로! 다 함께 이기는 게임입니다.</p>
+          <p className="text-sm mt-2 rounded-lg bg-sky-500/10 border border-sky-500/30 px-3 py-2">🎯 <b>목표</b>: 끝까지 살아남아 1위 하기! 여섯 나라가 순위를 겨룹니다.</p>
+          <p className="text-sm mt-2 rounded-lg bg-rose-500/10 border border-rose-500/40 px-3 py-2">❤️❤️ <b>목숨은 2개</b>. 라운드가 끝날 때 식량·물·에너지 중 하나라도 모자라면 목숨을 하나 잃고, 다 잃으면 나라가 멸망합니다.</p>
           <p className="text-sm font-semibold mt-3">라운드마다 할 일은 세 가지뿐이에요.</p>
           <ol className="mt-1.5 space-y-1.5 text-sm">
-            {[['①', '부족한 자원 채우기', '식량·물·에너지가 모자라면 다른 나라와 거래합니다.'], ['②', '정책 카드 1장 고르기', '네 장 가운데 우리 나라에 필요한 한 장.'], ['③', '사건 카드에 답하기', '그 라운드의 세계 사건에 참여할지 정합니다.']].map(([n, t, s]) => (
+            {[['①', '부족한 자원 채우기', '모자란 자원은 다른 나라와 거래해서 구합니다. 팔지 말지는 상대 마음!'], ['②', '정책 카드 1장 고르기', '세 장 가운데 우리 나라에 필요한 한 장.'], ['③', '사건 카드에 답하기', '그 라운드의 세계 사건에 참여할지 정합니다.']].map(([n, t, s]) => (
               <li key={n} className="rounded-lg bg-ink-950/50 px-3 py-2"><b className="text-amber-300 mr-1.5">{n}</b><b>{t}</b><span className="text-slate-300"> — {s}</span></li>
             ))}
           </ol>
@@ -176,13 +183,15 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
         <Panel title={`📊 ROUND ${state.round} 결산`} className="anim-pop">
           <p className="text-sm">
             {c.shortages[state.round]?.length
-              ? <span className="text-rose-300 font-semibold">⚠ {c.shortages[state.round].map((k) => RES_INFO[k].name).join('·')}이(가) 부족해 국민 행복도가 떨어졌습니다.</span>
-              : <span className="text-emerald-300 font-semibold">✓ 필요한 자원을 모두 확보했습니다.</span>}
+              ? <span className="text-rose-300 font-semibold">{dead ? '💀' : '💔'} {c.shortages[state.round].map((k) => RES_INFO[k].name).join('·')}이(가) 모자라 {dead ? '마지막 목숨을 잃고 멸망했습니다.' : '목숨을 하나 잃었습니다. 한 번 더 모자라면 멸망합니다!'}</span>
+              : dead ? <span className="text-slate-300">국제 구호단으로 활동 중입니다.</span> : <span className="text-emerald-300 font-semibold">✓ 필요한 자원을 모두 확보했습니다. 목숨을 지켰어요.</span>}
           </p>
-          <p className="text-sm text-slate-300 mt-1">행복도 {prev.happy} · 환경 {prev.env} · 신뢰도 {prev.trust} · 세계 평화 지수 {state.peace}</p>
+          <p className="text-sm text-slate-300 mt-1">목숨 <Hearts lives={c.lives} dead={dead} /> · 환경 {prev.env} · 신뢰도 {prev.trust} · 현재 {ranking(state).indexOf(me.country) + 1}위</p>
           <p className="text-xs text-slate-400 mt-2">선생님이 다음 라운드를 시작할 때까지, 다음에 누구와 무엇을 거래할지 의논하세요.</p>
         </Panel>
       )}
+
+      {dead && state.phase !== 'finished' && state.phase !== 'lobby' && <ReliefPanel {...p} />}
 
       {def && live && (
         <>
@@ -192,18 +201,18 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
 
           <Panel title="✅ 이번 라운드 할 일">
             <ol className="space-y-2">
-              <Step n="1" done={lack.length === 0} title="부족한 자원 채우기"
+              <Step n="1" done={lack.length === 0} title={lack.length ? '부족한 자원 채우기 — 못 채우면 💔 목숨 −1' : '부족한 자원 채우기'}
                 sub={lack.length ? <span className="text-rose-200">{lack.map((k) => `${RES_INFO[k].name} ${c.need[k] - c.stock[k]}`).join(', ')} 부족{incoming ? ` · 받은 제안 ${incoming}건` : ''}</span> : incoming ? `모두 충분 · 받은 제안 ${incoming}건` : '식량·물·에너지 모두 충분'}
                 action={<Btn small tone={lack.length || incoming ? 'primary' : 'ghost'} onClick={() => go('deal')}>협상하기</Btn>} />
-              <Step n="2" done={!!c.policy} title="정책 카드 1장 고르기" sub={chosen ? `${chosen.icon} ${chosen.name}${c.policy!.pick ? ` (${RES_INFO[c.policy!.pick].name})` : ''} 선택 완료` : '아래 네 장 중 하나'} />
+              <Step n="2" done={!!c.policy} title="정책 카드 1장 고르기" sub={chosen ? `${chosen.icon} ${chosen.name}${c.policy!.pick ? ` (${RES_INFO[c.policy!.pick].name})` : ''} 선택 완료` : '아래 세 장 중 하나'} />
               {ev && <Step n="3" done={ev.done} title={`사건 카드: ${ev.label}`} sub={ev.text} />}
             </ol>
-            <p className="text-[11px] text-slate-400 mt-2">순서는 상관없어요. 시간이 끝나면 식량·물·에너지를 필요한 만큼 소비합니다.{!quizDone && ' 아래 퀴즈도 풀어 보세요 (정답이면 돈 +3).'}</p>
+            <p className="text-[11px] text-slate-400 mt-2">순서는 상관없어요. 시간이 끝나면 식량·물·에너지를 필요한 만큼 소비하고, 하나라도 모자라면 목숨을 잃습니다.{!quizDone && ' 아래 퀴즈도 풀어 보세요 (정답이면 돈 +3).'}</p>
           </Panel>
         </>
       )}
 
-      <Panel title="📦 우리 나라 자원">
+      {!dead && <Panel title="📦 우리 나라 자원" right={<span className="text-base"><Hearts lives={c.lives} /></span>}>
         <div className="grid grid-cols-2 gap-2">
           {RES.map((k) => {
             const vital = (VITALS as string[]).includes(k);
@@ -226,23 +235,24 @@ function HomeTab(p: P & { go: (v: View) => void; askHelp: (k: Vital) => void; in
           })}
         </div>
         <div className="mt-3 space-y-2.5">
-          {(['happy', 'env', 'trust'] as const).map((k) => (
+          {(['env', 'trust'] as const).map((k) => (
             <div key={k}>
               <div className="flex justify-between text-xs mb-1">
-                <span>{IDX_INFO[k].icon} {IDX_INFO[k].name}<span className="text-slate-500"> · {k === 'happy' ? `${SURVIVAL_HAPPY} 아래면 생존 실패` : k === 'env' ? '낮으면 재난 피해가 커짐' : '협력하면 올라감'}</span></span>
-                <b className={cx('tnum', k === 'happy' && c.happy < SURVIVAL_HAPPY && 'text-rose-300')}>{c[k]}{k === 'happy' && c.happy < SURVIVAL_HAPPY ? ' ⚠' : ''}</b>
+                <span>{IDX_INFO[k].icon} {IDX_INFO[k].name}<span className="text-slate-500"> · {k === 'env' ? '낮으면 세계 재난 피해가 커짐' : '거래·지원·참여하면 올라감'}</span></span>
+                <b className="tnum">{c[k]}</b>
               </div>
-              <Bar value={c[k]} color={k === 'happy' ? (c.happy < SURVIVAL_HAPPY ? '#fb7185' : '#fbbf24') : k === 'env' ? '#34d399' : '#38bdf8'} mark={k === 'happy' ? SURVIVAL_HAPPY : undefined} />
+              <Bar value={c[k]} color={k === 'env' ? '#34d399' : '#38bdf8'} />
             </div>
           ))}
+          <p className="text-[11px] text-slate-400">목숨이 같으면 나라 점수로 순위를 정합니다. 지금 <b className="text-slate-200">{countryScore(c)}점</b> (신뢰도 40% + 환경 40% + 돈 최대 20점)</p>
         </div>
-      </Panel>
+      </Panel>}
 
       {live && <PolicyPanel {...p} />}
       {live && state.project && <ProjectPanel {...p} />}
       {live && state.dispute && <DisputePanel {...p} />}
       {live && state.treaty && <TreatyPanel {...p} />}
-      {state.round >= 1 && state.phase !== 'finished' && <QuizPanel state={state} me={me} cmd={cmd} />}
+      {state.round >= 1 && state.phase !== 'finished' && <QuizPanel state={state} me={me} cmd={cmd} dead={dead} />}
 
       <Panel title="👥 우리 대표단" right={isDelegate ? <Badge tone="good">★ 내가 대표</Badge> : <Badge tone="mute">대표단원</Badge>}>
         <ul className="flex flex-wrap gap-2">
@@ -285,7 +295,7 @@ function PolicyPanel({ state, me, cmd, canAct }: P) {
   const lack = lacking(state, me.country);
   return (
     <Panel title="🃏 정책 카드 — 한 장만 고르세요" right={<Badge tone="warn">라운드마다 1장</Badge>}>
-      <ul className="grid sm:grid-cols-2 gap-2">
+      <ul className="grid sm:grid-cols-3 gap-2">
         {POLICIES.map((a) => {
           const pick = picks[a.id] ?? (a.pick ? (lack.find((k) => a.pick!.includes(k)) ?? a.pick[0]) : undefined);
           const poor = c.stock.eco < a.cost;
@@ -295,7 +305,7 @@ function PolicyPanel({ state, me, cmd, canAct }: P) {
                 <div className="font-bold text-[15px]">{a.icon} {a.name}</div>
                 <Badge tone={poor ? 'bad' : 'info'}>💰 돈 {a.cost}</Badge>
               </div>
-              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.good}{a.id === 'invest' && me.country === 'IND' ? ' (우리는 +4)' : ''}{a.id === 'welfare' && me.country === 'NOV' ? ', 매 라운드 돈 +2' : ''}</p>
+              <p className="text-sm mt-1.5"><span className="text-emerald-300 font-semibold">👍 </span>{a.good}{a.id === 'invest' && me.country === 'IND' ? ' (우리는 +4)' : ''}</p>
               <p className="text-sm text-slate-300"><span className="text-rose-300 font-semibold">👎 </span>{a.id === 'invest' && me.country === 'ARC' ? '없음 (첨단 기술 덕분)' : a.bad}</p>
               <p className="text-[11px] text-slate-400 mt-1 flex-1">이럴 때: {a.when}</p>
               {a.pick && (
@@ -327,13 +337,14 @@ function ProjectPanel({ state, me, cmd, canAct }: P) {
   const { run, busy } = useAction(cmd);
   const victim = def.victims?.includes(me.country);
   const joined = pr.joined.includes(me.country);
-  const ok = pr.joined.length >= def.need;
+  const info = projectInfo(state);
+  const ok = pr.joined.length >= info.need;
   return (
-    <Panel title={`🌐 사건 카드: ${def.name}`} right={<Badge tone={ok ? 'good' : 'warn'}>{ok ? '✓ 성공 조건 달성' : `${pr.joined.length} / ${def.need}개국`}</Badge>}>
+    <Panel title={`🌐 사건 카드: ${def.name}`} right={<Badge tone={ok ? 'good' : 'warn'}>{ok ? '✓ 성공 조건 달성' : `${pr.joined.length} / ${info.need}개국`}</Badge>}>
       <p className="text-sm text-slate-200">{def.desc}</p>
-      <p className="text-sm mt-1"><b className="text-emerald-300">{def.need}개국 이상 참여하면</b> {def.success}</p>
+      <p className="text-sm mt-1"><b className="text-emerald-300">{info.need}개국 이상 참여하면</b> {def.success}</p>
       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs">
-        {COUNTRY_IDS.filter((id) => !def.victims?.includes(id)).map((id) => <span key={id} className={pr.joined.includes(id) ? '' : 'opacity-40'}>{pr.joined.includes(id) ? '✅' : '⬜'} <CountryTag id={id} /></span>)}
+        {info.eligible.map((id) => <span key={id} className={pr.joined.includes(id) ? '' : 'opacity-40'}>{pr.joined.includes(id) ? '✅' : '⬜'} <CountryTag id={id} /></span>)}
       </div>
       <div className="mt-3">
         {victim ? <p className="text-sm text-sky-200">우리 나라는 이번 재난의 피해국입니다. 다른 나라에 참여를 부탁해 보세요.</p>
@@ -371,7 +382,7 @@ function DisputePanel({ state, me, cmd, canAct }: P) {
                 <div className="text-xs text-slate-200">{STANCES[k].desc}</div>
               </button>
             ))}
-            <p className="text-xs text-slate-400">두 나라 모두 평화로운 방법(위 두 가지)을 고르면: 남은 라운드 동안 그린벨트는 물 4, 솔라니아는 에너지 4를 서로 주고, 양국 신뢰도 +8·행복도 +3.</p>
+            <p className="text-xs text-slate-400">두 나라 모두 평화로운 방법(위 두 가지)을 고르면: 남은 라운드 동안 그린벨트는 물 4, 솔라니아는 에너지 4를 서로 주고, 양국 신뢰도 +8. 한쪽이라도 혼자 밀어붙이면 상대는 물을 잃습니다.</p>
           </div>
         )
       ) : (
@@ -391,7 +402,7 @@ function TreatyPanel({ state, me, cmd, canAct }: P) {
   const { run, busy } = useAction(cmd);
   return (
     <Panel title="📜 사건 카드: 세계 평화 협약" right={<Badge tone={tally.adopted ? 'good' : 'warn'}>{tally.adopted ? `✓ 채택 가능 (${tally.included}개 조항)` : `합의 조항 ${tally.included} / ${TREATY_RULES.minClauses}`}</Badge>}>
-      <p className="text-xs text-slate-300">조항마다 찬성·반대를 고르세요. <b>{TREATY_RULES.clauseVotes}개국 이상 찬성</b>한 조항이 <b>{TREATY_RULES.minClauses}개 이상</b>이면 협약이 채택됩니다. 채택된 조항의 효과는 <b>찬성한 나라</b>에 적용되고 신뢰도 +2를 얻습니다. 라운드가 끝나기 전까지 바꿀 수 있어요.</p>
+      <p className="text-xs text-slate-300">조항마다 찬성·반대를 고르세요. <b>{tally.needVotes}개국 이상 찬성</b>한 조항이 <b>{TREATY_RULES.minClauses}개 이상</b>이면 협약이 채택됩니다. 채택된 조항의 효과는 <b>찬성한 나라</b>에 적용되고 신뢰도 +2를 얻습니다. 라운드가 끝나기 전까지 바꿀 수 있어요.</p>
       <ul className="mt-3 space-y-2">
         {CLAUSES.map((cl) => {
           const n = tally.yes[cl.id].length, v = mine[cl.id];
@@ -399,7 +410,7 @@ function TreatyPanel({ state, me, cmd, canAct }: P) {
             <li key={cl.id} className={cx('rounded-xl border p-3', tally.clauses[cl.id] ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-line bg-ink-950/40')}>
               <div className="flex items-start justify-between gap-2">
                 <div className="font-bold text-sm">{cl.icon} {cl.name}</div>
-                <Badge tone={tally.clauses[cl.id] ? 'good' : 'mute'}>찬성 {n} / 6</Badge>
+                <Badge tone={tally.clauses[cl.id] ? 'good' : 'mute'}>찬성 {n} / {tally.voters}</Badge>
               </div>
               <p className="text-xs text-slate-300 mt-1">{cl.effect}</p>
               <div className="flex gap-2 mt-2">
@@ -418,43 +429,90 @@ function TreatyPanel({ state, me, cmd, canAct }: P) {
   );
 }
 
+/** 멸망한 나라의 화면: 국제 구호단으로 라운드마다 한 나라에 자원 지원 */
+function ReliefPanel({ state, me, cmd, canAct }: P) {
+  const c = state.countries[me.country];
+  const alive = aliveIds(state);
+  const [to, setTo] = useState<CountryId | null>(null);
+  const [res, setRes] = useState<Vital>('food');
+  const { run, busy } = useAction(cmd);
+  const live = state.phase === 'running' || state.phase === 'paused';
+  return (
+    <Panel title="🚑 국제 구호단" right={c.reliefDone ? <Badge tone="good">✓ 이번 라운드 지원 완료</Badge> : <Badge tone="warn">라운드마다 한 번</Badge>}>
+      <p className="text-sm text-slate-200">살아 있는 나라 하나를 골라 자원 {RELIEF_AMOUNT}을(를) 보낼 수 있습니다. 누구를 도울지는 구호단이 정합니다. 여러 나라의 이야기를 들어 보세요.</p>
+      {!live ? <p className="text-sm text-slate-400 mt-2">다음 라운드가 시작되면 지원할 수 있습니다.</p>
+        : c.reliefDone ? <p className="text-sm text-emerald-300 font-semibold mt-2">이번 라운드의 지원을 보냈습니다. 다음 라운드에 다시 도울 수 있어요.</p> : (
+          <>
+            <div className="text-xs font-semibold text-slate-300 mt-3 mb-1">① 어느 나라를 도울까요?</div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {alive.map((id) => {
+                const lack = lacking(state, id);
+                return (
+                  <button key={id} onClick={() => { setTo(id); if (lack[0]) setRes(lack[0]); }} aria-pressed={to === id}
+                    className={cx('rounded-lg border px-1 py-2 text-xs font-semibold leading-tight', to === id ? 'bg-ink-600 text-white' : 'border-line text-slate-300')} style={to === id ? { borderColor: COUNTRIES[id].color } : undefined}>
+                    <span className="block text-lg" aria-hidden>{COUNTRIES[id].icon}</span>{COUNTRIES[id].short}
+                    <span className="block mt-0.5"><Hearts lives={state.countries[id].lives} /></span>
+                    <span className={cx('block text-[10px] mt-0.5', lack.length ? 'text-rose-300' : 'text-slate-500')}>{lack.length ? `${lack.map((k) => RES_INFO[k].name).join('·')} 부족` : '부족 없음'}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs font-semibold text-slate-300 mt-3 mb-1">② 무엇을 보낼까요?</div>
+            <div className="flex gap-1.5">
+              {VITALS.map((k) => <button key={k} onClick={() => setRes(k)} aria-pressed={res === k} className={cx('flex-1 rounded-lg border px-1 py-2 text-sm font-semibold', res === k ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-line text-slate-300')}>{RES_INFO[k].icon} {RES_INFO[k].name} {RELIEF_AMOUNT}</button>)}
+            </div>
+            <Btn tone="good" className="mt-3 w-full" disabled={!canAct || busy || !to} onClick={() => run('relief', { to, res }, `${COUNTRIES[to!].short}에 ${RES_INFO[res].name} ${RELIEF_AMOUNT}을(를) 지원했습니다.`)}>{!to ? '도울 나라를 고르세요' : !canAct ? '대표만 보낼 수 있어요' : `${COUNTRIES[to].short}에 ${RES_INFO[res].name} 보내기`}</Btn>
+          </>
+        )}
+    </Panel>
+  );
+}
+
+/** 최종 결과: 순위 + 나라별 결과 분석(현실의 교훈) */
 export function ResultsPanel({ state, me }: { state: PublicRoom; me?: CountryId }) {
   const r = state.results!;
-  const tone = r.outcome === 'win' ? 'border-emerald-400 bg-emerald-500/10' : r.outcome === 'partial' ? 'border-amber-400 bg-amber-500/10' : 'border-rose-400 bg-rose-500/10';
+  const [sel, setSel] = useState<CountryId>(me ?? r.ranking[r.ranking.length - 1]);
+  const medal = ['🥇', '🥈', '🥉'];
   return (
-    <section className={cx('rounded-2xl border-2 p-4 anim-pop', tone)}>
+    <section className="rounded-2xl border-2 border-amber-400/70 bg-amber-500/5 p-4 anim-pop">
       <p className="text-xs tracking-widest text-slate-300">최종 결과</p>
-      <h2 className="text-2xl font-extrabold mt-0.5">{r.outcome === 'win' ? '🎉' : r.outcome === 'partial' ? '🌤️' : '⛈️'} {outcomeText[r.outcome]}</h2>
-      <p className="text-sm text-slate-200 mt-1">
-        {r.outcome === 'win' ? '모든 나라가 살아남았고 세계 평화 지수가 기준을 넘었습니다.' : `살아남은 나라 ${r.world.survivors}/6, 세계 평화 지수 ${r.world.peace} (기준 ${WIN_PEACE}). 무엇이 부족했는지 함께 이야기해 보세요.`}
-      </p>
-      <h3 className="text-sm font-bold text-sky-200 mt-4 mb-1">세계가 함께 이룬 것</h3>
-      <ul className="text-sm grid sm:grid-cols-2 gap-x-4 gap-y-1">
-        <li>🕊️ 세계 평화 지수 <b className="tnum">{r.world.peaceStart} → {r.world.peace}</b></li>
-        <li>🛟 살아남은 나라 <b className="tnum">{r.world.survivors} / 6</b></li>
-        <li>⚖️ 나라 간 행복도 격차 <b className="tnum">{r.world.gapStart} → {r.world.gapEnd}</b> {r.world.gapEnd <= r.world.gapStart ? '(줄어듦)' : '(커짐)'}</li>
-        <li>🌐 성공한 공동 대응 <b className="tnum">{r.world.projects} / 3</b> · 재난 구호 {r.world.reliefSuccess ? '성공' : '실패'}</li>
-        <li>⚖️ 미르강 분쟁 <b>{r.world.disputePeace ? '평화적 해결' : '해결 실패'}</b></li>
-        <li>📜 세계 평화 협약 <b>{r.world.treatyAdopted ? `채택 (${r.world.treatyClauses}개 조항)` : '무산'}</b></li>
+      <h2 className="text-2xl font-extrabold mt-0.5">🏆 1위 <span style={{ color: COUNTRIES[r.ranking[0]].color }}>{COUNTRIES[r.ranking[0]].name}</span></h2>
+      <p className="text-sm text-slate-300 mt-1">살아남은 나라 {r.world.survivors} / 6 · 순위는 오래 살아남은 순 → 남은 목숨 → 나라 점수로 정합니다.</p>
+      <ol className="mt-3 space-y-1.5">
+        {r.ranking.map((id, i) => {
+          const c = r.countries[id];
+          return (
+            <li key={id}>
+              <button onClick={() => setSel(id)} aria-pressed={sel === id} className={cx('w-full flex items-center gap-2 rounded-xl border px-3 py-2 text-left', sel === id ? 'border-sky-400 bg-sky-500/15' : 'border-line bg-ink-950/40', me === id && 'ring-1 ring-white/50')}>
+                <span className="w-8 text-center text-lg font-extrabold tnum">{medal[i] ?? `${i + 1}`}</span>
+                <span className="flex-1 min-w-0 truncate"><CountryTag id={id} />{me === id && <span className="text-xs text-slate-400"> (우리)</span>}</span>
+                <span className="text-sm">{c.diedRound !== null ? <span className="text-slate-400 whitespace-nowrap">💀 R{c.diedRound} 멸망</span> : <Hearts lives={c.lives} />}</span>
+                <span className="w-14 text-right text-sm tnum text-slate-300">{c.score}점</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      <h3 className="text-sm font-bold text-sky-200 mt-4 mb-2">🔎 왜 이런 결과가 나왔을까? — {COUNTRIES[sel].icon} {COUNTRIES[sel].short} <span className="font-normal text-slate-400">(위에서 나라를 누르면 바뀝니다)</span></h3>
+      <ul className="space-y-2">
+        {diagnose(state, sel).map((f, i) => (
+          <li key={i} className={cx('rounded-xl border-l-4 bg-ink-950/50 px-3 py-2.5', f.tone === 'bad' ? 'border-rose-400' : 'border-emerald-400')}>
+            <div className="font-bold text-sm">{f.tone === 'bad' ? '⚠' : '✓'} {f.title}</div>
+            <div className="text-xs text-slate-300 mt-0.5">{f.fact}</div>
+            <div className="text-sm text-amber-100 mt-1.5 leading-relaxed">🌍 {f.lesson}</div>
+          </li>
+        ))}
       </ul>
-      <h3 className="text-sm font-bold text-sky-200 mt-4 mb-1">나라별 점수 (각 25점, 순위보다 균형을 보세요)</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs tnum min-w-[420px]">
-          <thead><tr className="text-left text-slate-400"><th className="py-1">나라</th><th>자원 확보</th><th>행복</th><th>환경</th><th>신뢰</th><th>합계</th><th>생존</th></tr></thead>
-          <tbody>
-            {COUNTRY_IDS.map((id) => {
-              const s = r.countries[id];
-              return (
-                <tr key={id} className={cx('border-t border-line/60', me === id && 'bg-sky-500/10')}>
-                  <td className="py-1.5"><CountryTag id={id} /></td><td>{s.survival}</td><td>{s.happy}</td><td>{s.env}</td><td>{s.trust}</td>
-                  <td className="font-bold text-sm">{s.total}</td><td>{s.survived ? <Badge tone="good">✓ 생존</Badge> : <Badge tone="bad">✕ 위기</Badge>}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-[11px] text-slate-400 mt-3">※ 점수는 학습용 게임 지표이며 실제 국제사회의 복잡성을 정확하게 수치화한 것이 아닙니다.</p>
+
+      <h3 className="text-sm font-bold text-sky-200 mt-4 mb-1">세계에 일어난 일</h3>
+      <ul className="text-sm grid sm:grid-cols-2 gap-x-4 gap-y-1">
+        <li>🌐 성공한 공동 대응 <b className="tnum">{r.world.projects} / 3</b></li>
+        <li>⚖️ 미르강 분쟁 <b>{{ peace: '평화적 해결', failed: '평화적 해결 실패', none: '일어나지 않음' }[r.world.dispute]}</b></li>
+        <li>📜 세계 평화 협약 <b>{r.world.treatyAdopted ? `채택 (${r.world.treatyClauses}개 조항)` : '무산'}</b></li>
+        <li>🕊️ 세계 평화 지수 <b className="tnum">{r.world.peaceStart} → {r.world.peace}</b></li>
+      </ul>
+      <p className="text-[11px] text-slate-400 mt-3">※ 순위와 점수는 학습용 게임 지표입니다. 나라와 사건은 가상이며, 🌍 표시의 설명만 실제 사실에 바탕을 둡니다. 진 나라가 "못했다"기보다 어떤 구조에 놓였는지 살펴보세요.</p>
     </section>
   );
 }
@@ -462,8 +520,8 @@ export function ResultsPanel({ state, me }: { state: PublicRoom; me?: CountryId 
 // ───────────────────────── 협상 ─────────────────────────
 function DealTab({ state, me, cmd, canAct, draft, clearDraft, askHelp }: P & { draft: Draft | null; clearDraft: () => void; askHelp: (k: Vital) => void }) {
   const c = state.countries[me.country];
-  const others = COUNTRY_IDS.filter((id) => id !== me.country);
-  const [to, setTo] = useState<CountryId>(draft?.to ?? others[0]);
+  const others = aliveIds(state).filter((id) => id !== me.country);
+  const [to, setTo] = useState<CountryId>(draft?.to ?? others[0] ?? me.country);
   const [give, setGive] = useState<ResBundle>(draft?.give ?? {});
   const [take, setTake] = useState<ResBundle>(draft?.take ?? {});
   const [memo, setMemo] = useState('');
@@ -477,10 +535,12 @@ function DealTab({ state, me, cmd, canAct, draft, clearDraft, askHelp }: P & { d
   const history = state.proposals.filter((p) => (p.to === me.country || p.from === me.country) && p.status !== 'pending').slice(-20).reverse();
   const tc = state.countries[to];
   const lack = state.phase === 'running' ? lacking(state, me.country) : [];
+  useEffect(() => { if (!others.includes(to) && others[0]) setTo(others[0]); }, [others.join()]);
   const spare = (id: CountryId) => VITALS.filter((k) => state.countries[id].stock[k] - state.countries[id].need[k] >= 3);
   const send = async () => {
     if (await run('propose', { to, give, take, memo }, `${COUNTRIES[to].short}에 제안을 보냈습니다. 상대 대표가 승인하면 체결됩니다.`)) { setGive({}); setTake({}); setMemo(''); }
   };
+  if (c.diedRound !== null) return <Panel title="🤝 협상"><p className="text-sm text-slate-300">멸망한 나라는 거래할 수 없습니다. 「우리 나라」 화면에서 국제 구호단으로 다른 나라를 도와주세요.</p></Panel>;
   return (
     <>
       <Panel title={`📥 받은 제안 (${incoming.length})`}>
@@ -499,7 +559,7 @@ function DealTab({ state, me, cmd, canAct, draft, clearDraft, askHelp }: P & { d
           </div>
         )}
         <div className="text-xs font-semibold text-slate-300 mb-1">① 어느 나라에?</div>
-        <div className="grid grid-cols-5 gap-1.5" role="radiogroup" aria-label="상대 국가">
+        <div className="grid grid-cols-5 gap-1.5" role="radiogroup" aria-label="상대 국가">{others.length === 0 && <p className="col-span-5 text-sm text-slate-400">거래할 수 있는 나라가 없습니다.</p>}
           {others.map((id) => (
             <button key={id} role="radio" aria-checked={to === id} onClick={() => setTo(id)}
               className={cx('rounded-lg border px-1 py-2 text-[11px] font-semibold leading-tight', to === id ? 'bg-ink-600 text-white' : 'border-line text-slate-300')} style={to === id ? { borderColor: COUNTRIES[id].color } : undefined}>
@@ -520,7 +580,7 @@ function DealTab({ state, me, cmd, canAct, draft, clearDraft, askHelp }: P & { d
           <Btn disabled={!canAct || busy || g + t === 0} onClick={send}>제안 보내기</Btn>
           <span className="text-xs text-slate-300">{kind || '줄 것이나 받을 것을 입력하세요'}</span>
         </div>
-        <p className="text-[11px] text-slate-500 mt-2">상대 대표가 승인하면 자원이 한 번에 교환됩니다. 거래는 몇 번이든 할 수 있고, 답이 없는 제안은 라운드가 끝나면 사라집니다. 부족한 나라를 대가 없이 도우면 신뢰도가 오릅니다.</p>
+        <p className="text-[11px] text-slate-500 mt-2">상대 대표가 승인하면 자원이 한 번에 교환됩니다. 팔지 말지, 얼마에 팔지는 각 나라의 자유입니다. 답이 없는 제안은 라운드가 끝나면 사라집니다. 부족한 나라를 대가 없이 도우면 신뢰도가 오릅니다.</p>
       </Panel>
 
       {outgoing.length > 0 && <Panel title={`📤 보낸 제안 (${outgoing.length})`}><ul className="space-y-2">{outgoing.map((p) => <ProposalCard key={p.id} p={p} state={state} me={me.country} canAct={canAct} cmd={cmd} />)}</ul></Panel>}

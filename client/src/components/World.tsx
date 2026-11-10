@@ -1,9 +1,10 @@
 // 세계 현황 공용 컴포넌트: 가상 세계 지도(직접 제작 SVG), 평화 지수, 뉴스, 국가 표
 import { useEffect, useRef, useState } from 'react';
-import { COUNTRIES, COUNTRY_IDS, RES, RES_INFO, SURVIVAL_HAPPY, VITALS, WIN_PEACE } from '../../../shared/data';
+import { COUNTRIES, COUNTRY_IDS, RES, RES_INFO, START_LIVES, VITALS } from '../../../shared/data';
 import { calcPeace, lacking } from '../../../shared/engine';
 import type { CountryId, PublicRoom } from '../../../shared/types';
-import { Badge, Bar, CountUp, CountryTag, cx, peaceTone, useDelta } from '../lib/ui';
+import { aliveIds } from '../../../shared/engine';
+import { Badge, Bar, CountUp, CountryTag, cx, Hearts, peaceTone, useDelta } from '../lib/ui';
 
 // 대륙 모양은 중심점과 반지름 목록으로 직접 그린 가상의 지형입니다. (실제 지도 아님)
 const SHAPES: Record<CountryId, number[]> = {
@@ -51,18 +52,19 @@ export function WorldMap({ state, me, onPick, big }: { state: PublicRoom; me?: C
       {COUNTRY_IDS.map((id) => {
         const d = COUNTRIES[id], c = state.countries[id];
         const lack = lacking(state, id);
-        const danger = c.happy < SURVIVAL_HAPPY || lack.length > 0;
+        const dead = c.diedRound !== null;
+        const danger = !dead && (c.lives < START_LIVES || lack.length > 0);
         const mine = me === id;
         return (
           <g key={id} onClick={onPick ? () => onPick(id) : undefined} style={{ cursor: onPick ? 'pointer' : 'default' }}>
             {id === 'OCE' && ISLETS.map(([x, y, r], i) => <ellipse key={i} cx={x} cy={y} rx={r * 1.3} ry={r} fill={d.color} fillOpacity="0.3" stroke={d.color} strokeWidth="1.5" />)}
-            <path d={blob(d.map.x, d.map.y, SHAPES[id])} fill={d.color} fillOpacity={mine ? 0.42 : 0.24} stroke={d.color} strokeWidth={mine ? 4 : 2} strokeLinejoin="round" />
+            <path d={blob(d.map.x, d.map.y, SHAPES[id])} fill={dead ? '#64748b' : d.color} fillOpacity={dead ? 0.15 : mine ? 0.42 : 0.24} stroke={dead ? '#64748b' : d.color} strokeWidth={mine ? 4 : 2} strokeLinejoin="round" />
             {danger && <circle cx={d.map.x + 70} cy={d.map.y - 48} r="6" fill="#fb7185" className="anim-dot" />}
             <text x={d.map.x} y={d.map.y - 30} textAnchor="middle" fontSize={big ? 30 : 28}>{d.icon}</text>
             <text x={d.map.x} y={d.map.y - 4} textAnchor="middle" fill="#fff" fontSize={big ? 21 : 19} fontWeight="700" stroke="#081326" strokeWidth="4" paintOrder="stroke">{d.short}</text>
-            <text x={d.map.x} y={d.map.y + 18} textAnchor="middle" fill="#dbeafe" fontSize="14" stroke="#081326" strokeWidth="3" paintOrder="stroke">😊 {c.happy} · 🌱 {c.env} · 🤝 {c.trust}</text>
+            <text x={d.map.x} y={d.map.y + 18} textAnchor="middle" fill="#dbeafe" fontSize="14" stroke="#081326" strokeWidth="3" paintOrder="stroke">{dead ? '💀 멸망 · 국제 구호단' : `${'❤️'.repeat(c.lives)}${'🖤'.repeat(START_LIVES - c.lives)} · 🌱 ${c.env} · 🤝 ${c.trust}`}</text>
             <text x={d.map.x} y={d.map.y + 38} textAnchor="middle" fill={lack.length ? '#fda4af' : '#a7f3d0'} fontSize="13.5" fontWeight="600" stroke="#081326" strokeWidth="3" paintOrder="stroke">
-              {state.round === 0 ? d.tagline : lack.length ? `⚠ ${lack.map((k) => RES_INFO[k].name).join('·')} 부족` : '✓ 필수 자원 확보'}
+              {state.round === 0 ? d.tagline : dead ? '' : lack.length ? `⚠ ${lack.map((k) => RES_INFO[k].name).join('·')} 부족` : '✓ 필수 자원 확보'}
             </text>
             {mine && <text x={d.map.x} y={d.map.y + 58} textAnchor="middle" fill="#fff" fontSize="13" fontWeight="700" stroke="#081326" strokeWidth="3" paintOrder="stroke">▲ 우리 나라</text>}
           </g>
@@ -84,8 +86,6 @@ export function PeaceGauge({ state, big }: { state: PublicRoom; big?: boolean })
         <svg viewBox="0 0 132 132" className="w-full h-full -rotate-90">
           <circle cx="66" cy="66" r={R} fill="none" stroke="#0a1428" strokeWidth="12" />
           <circle cx="66" cy="66" r={R} fill="none" stroke={tone.color} strokeWidth="12" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - v / 100)} style={{ transition: 'stroke-dashoffset 1s ease, stroke 1s' }} />
-          {/* 공동 승리 기준선 */}
-          <line x1="66" y1="4" x2="66" y2="20" stroke="#fff" strokeWidth="2.5" transform={`rotate(${(WIN_PEACE / 100) * 360} 66 66)`} />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <CountUp value={v} className={cx('font-extrabold leading-none', big ? 'text-6xl' : 'text-4xl')} />
@@ -99,7 +99,7 @@ export function PeaceGauge({ state, big }: { state: PublicRoom; big?: boolean })
       </div>
       <div className={cx('min-w-0', big ? 'text-base' : 'text-xs')}>
         <div className={cx('font-bold text-sky-200', big ? 'text-xl' : 'text-sm')}>세계 평화 지수</div>
-        <div className="text-slate-300 mt-1">공동 승리 기준 <b className="text-white">{WIN_PEACE}</b> 이상 (흰 눈금)</div>
+        <div className="text-slate-300 mt-1">살아남은 나라 <b className="text-white">{aliveIds(state).length} / 6</b></div>
         <div className="flex items-end gap-1 mt-2 h-8" aria-label="라운드별 평화 지수 변화">
           {state.peaceHistory.map((h, i) => (
             <div key={i} className="flex flex-col items-center gap-0.5" title={`${h.label}: ${h.value}`}>
@@ -116,8 +116,7 @@ export function PeaceGauge({ state, big }: { state: PublicRoom; big?: boolean })
 export function PeaceBreakdown({ state }: { state: PublicRoom }) {
   const p = calcPeace(state);
   const rows: [string, number, string][] = [
-    ['여섯 나라의 평균 신뢰도', p.trust, '40%'], ['평균 행복도', p.happy, '30%'], ['평균 환경', p.env, '15%'],
-    ['나라 간 형평 (행복도 격차 ' + p.gap + ')', p.equity, '15%'],
+    ['여섯 나라의 평균 신뢰도', p.trust, '50%'], ['평균 환경', p.env, '25%'], ['남은 목숨 비율', p.life, '25%'],
   ];
   return (
     <div className="space-y-2">
@@ -178,7 +177,7 @@ export function CountryTable({ state, me }: { state: PublicRoom; me?: CountryId 
           <tr className="text-slate-400 text-left">
             <th className="py-1.5 px-1 font-medium">국가</th>
             {RES.map((k) => <th key={k} className="px-1 font-medium text-right" title={RES_INFO[k].name}>{RES_INFO[k].icon}<span className="hidden sm:inline"> {RES_INFO[k].name}</span></th>)}
-            <th className="px-1 font-medium text-right">😊</th><th className="px-1 font-medium text-right">🌱</th><th className="px-1 font-medium text-right">🤝</th>
+            <th className="px-1 font-medium text-right">목숨</th><th className="px-1 font-medium text-right">🌱</th><th className="px-1 font-medium text-right">🤝</th>
             <th className="px-1 font-medium">상태</th>
           </tr>
         </thead>
@@ -194,9 +193,9 @@ export function CountryTable({ state, me }: { state: PublicRoom; me?: CountryId 
                   const short = (VITALS as string[]).includes(k) && lack.includes(k as never);
                   return <td key={k} className={cx('px-1 text-right', short && 'text-rose-300 font-bold')}>{c.stock[k]}{live && (VITALS as string[]).includes(k) && <span className="text-slate-500">/{c.need[k as 'food']}</span>}</td>;
                 })}
-                <td className={cx('px-1 text-right', c.happy < SURVIVAL_HAPPY && 'text-rose-300 font-bold')}>{c.happy}</td>
+                <td className="px-1 text-right"><Hearts lives={c.lives} dead={c.diedRound !== null} text={false} /></td>
                 <td className="px-1 text-right">{c.env}</td><td className="px-1 text-right">{c.trust}</td>
-                <td className="px-1">{state.round === 0 ? <Badge tone="mute">대기</Badge> : lack.length || c.happy < SURVIVAL_HAPPY ? <Badge tone="bad">⚠ 위기</Badge> : <Badge tone="good">✓ 안정</Badge>}</td>
+                <td className="px-1">{state.round === 0 ? <Badge tone="mute">대기</Badge> : c.diedRound !== null ? <Badge tone="mute">💀 R{c.diedRound} 멸망</Badge> : lack.length ? <Badge tone="bad">⚠ 부족</Badge> : <Badge tone="good">✓ 안정</Badge>}</td>
               </tr>
             );
           })}

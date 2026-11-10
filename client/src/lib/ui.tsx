@@ -1,6 +1,6 @@
 // 공용 UI 조각
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { COUNTRIES, RES, RES_INFO } from '../../../shared/data';
+import { COUNTRIES, RES, RES_INFO, START_LIVES } from '../../../shared/data';
 import type { CountryId, PublicRoom, Res, ResBundle } from '../../../shared/types';
 import type { ConnStatus } from './net';
 
@@ -169,7 +169,13 @@ export function useDelta(value: number, holdMs = 2600): number {
   return delta;
 }
 
+/** 목숨 표시: ❤️❤️ / ❤️🖤 / 💀 멸망 */
+export function Hearts({ lives, dead, text }: { lives: number; dead?: boolean; text?: boolean }) {
+  if (dead || lives <= 0) return <span className="whitespace-nowrap text-slate-400" aria-label="멸망">💀{text !== false && ' 멸망'}</span>;
+  return <span className="whitespace-nowrap" aria-label={`목숨 ${lives}개`}>{'❤️'.repeat(lives)}{'🖤'.repeat(Math.max(0, START_LIVES - lives))}</span>;
+}
+
 export const phaseLabel = (s: PublicRoom) =>
   s.phase === 'lobby' ? '대기실' : s.phase === 'finished' ? '게임 종료' : s.phase === 'roundEnd' ? `ROUND ${s.round} 결산` : s.phase === 'paused' ? `ROUND ${s.round} 일시정지` : `ROUND ${s.round} 진행 중`;
 
-export const peaceTone = (v: number) => (v >= 65 ? { color: '#34d399', label: '안정' } : v >= 50 ? { color: '#fbbf24', label: '불안' } : { color: '#f87171', label: '위기' });
+export const peaceTone = (v: number) => (v >= 70 ? { color: '#34d399', label: '안정' } : v >= 50 ? { color: '#fbbf24', label: '불안' } : { color: '#f87171', label: '위기' });

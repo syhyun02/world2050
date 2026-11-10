@@ -8,7 +8,7 @@
 import { QUIZZES } from './content';
 import {
   CLAUSES, COUNTRIES, COUNTRY_IDS, DISPUTE_PARTIES, POLICIES, RES, RES_INFO, ROUNDS,
-  SURVIVAL_HAPPY, TEACHER_EVENTS, TOTAL_ROUNDS, TREATY_RULES, VITALS, WIN_PEACE, fmtBundle,
+  RELIEF_AMOUNT, START_LIVES, TEACHER_EVENTS, TOTAL_ROUNDS, TREATY_RULES, VITALS, fmtBundle,
 } from './data';
 import {
   GameError, type CountryId, type CountryState, type Ctx, type LogEntry, type MeInfo, type News,
@@ -26,9 +26,9 @@ function newCountry(id: CountryId): CountryState {
   const d = COUNTRIES[id];
   return {
     id, stock: { ...d.stock }, prod: { ...d.prod }, need: { ...d.need },
-    happy: d.happy, env: d.env, trust: d.trust, policy: null,
+    lives: START_LIVES, diedRound: null, reliefDone: false, env: d.env, trust: d.trust, policy: null,
     shortages: {}, roundTrust: { trade: 0, aid: 0 }, hubBonus: 0, quizBonus: [], delegate: null,
-    history: [{ round: 0, stock: { ...d.stock }, happy: d.happy, env: d.env, trust: d.trust, shortages: [] }],
+    history: [{ round: 0, stock: { ...d.stock }, lives: START_LIVES, env: d.env, trust: d.trust, shortages: [] }],
   };
 }
 
@@ -36,7 +36,7 @@ export function newRoom(code: string, className: string, durationSec: number, jo
   const countries = {} as Record<CountryId, CountryState>;
   for (const id of COUNTRY_IDS) countries[id] = newCountry(id);
   const room: Room = {
-    v: 2, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
+    v: 3, code, className, createdAt: now, phase: 'lobby', round: 0, durationSec, endsAt: null, remainingMs: null,
     countries, players: {}, proposals: [], agreements: [], recurring: [], news: [], log: [],
     project: null, projectResults: {}, dispute: null, treaty: null,
     peace: 0, peaceHistory: [], severity: 1, results: null, quizStats: {}, seq: 0,
@@ -73,76 +73,89 @@ export function meView(room: Room, pid: string): MeInfo | null {
 }
 
 // ───────────────────────── 공용 계산 ─────────────────────────
-/** 세계 평화 지수 = 신뢰 40% + 행복 30% + 환경 15% + 형평 15% */
-export function calcPeace(room: Pick<Room, 'countries'>) {
+type HasCountries = Pick<Room, 'countries'>;
+export const isAlive = (room: HasCountries, id: CountryId) => room.countries[id].diedRound === null;
+export const aliveIds = (room: HasCountries) => COUNTRY_IDS.filter((id) => isAlive(room, id));
+
+/** 세계 평화 지수 = 평균 신뢰도 50% + 평균 환경 25% + 남은 목숨 비율 25% (참고용 지표) */
+export function calcPeace(room: HasCountries) {
   const cs = COUNTRY_IDS.map((id) => room.countries[id]);
   const avg = (f: (c: CountryState) => number) => cs.reduce((s, c) => s + f(c), 0) / cs.length;
   const trust = avg((c) => c.trust);
-  const happy = avg((c) => c.happy);
   const env = avg((c) => c.env);
-  const hs = cs.map((c) => c.happy);
-  const gap = Math.max(...hs) - Math.min(...hs);
-  const equity = clamp(100 - 2 * gap);
-  const value = clamp(0.4 * trust + 0.3 * happy + 0.15 * env + 0.15 * equity);
-  return { value, trust: Math.round(trust), happy: Math.round(happy), env: Math.round(env), equity, gap };
+  const life = clamp((cs.reduce((s, c) => s + c.lives, 0) / (cs.length * START_LIVES)) * 100);
+  const value = clamp(0.5 * trust + 0.25 * env + 0.25 * life);
+  return { value, trust: Math.round(trust), env: Math.round(env), life };
 }
 
-/** 지금 부족한(진행 중) 또는 이번 라운드에 부족했던(결산 후) 필수 자원 */
+/** 나라 점수 (동점일 때 순위를 가르는 값) = 신뢰도 40% + 환경 40% + 돈(최대 20점) */
+export function countryScore(c: CountryState): number {
+  return Math.round(c.trust * 0.4 + c.env * 0.4 + Math.min(20, c.stock.eco / 3));
+}
+
+/** 순위: 살아남은 나라가 먼저, 늦게 멸망할수록 위, 목숨이 많을수록 위, 나라 점수가 높을수록 위 */
+export function ranking(room: HasCountries): CountryId[] {
+  const key = (id: CountryId) => { const c = room.countries[id]; return [c.diedRound ?? 99, c.lives, countryScore(c)]; };
+  return [...COUNTRY_IDS].sort((x, y) => { const a = key(x), b = key(y); return b[0] - a[0] || b[1] - a[1] || b[2] - a[2]; });
+}
+
+/** 지금 부족한(진행 중) 또는 이번 라운드에 부족했던(결산 후) 필수 자원. 멸망한 나라는 항상 빈 목록 */
 export function lacking(room: Pick<Room, 'countries' | 'phase' | 'round'>, id: CountryId): Vital[] {
   const c = room.countries[id];
-  if (room.phase === 'running' || room.phase === 'paused') return VITALS.filter((k) => c.stock[k] < c.need[k]);
+  if (room.phase === 'running' || room.phase === 'paused') return c.diedRound === null ? VITALS.filter((k) => c.stock[k] < c.need[k]) : [];
   return c.shortages[room.round] ?? [];
 }
 
-export function avgEnv(room: Pick<Room, 'countries'>): number {
+export function avgEnv(room: HasCountries): number {
   return COUNTRY_IDS.reduce((s, id) => s + room.countries[id].env, 0) / COUNTRY_IDS.length;
 }
 
-/** 협약 조항별 찬성 수와 채택 여부 (진행 중에도 잠정 결과 표시용으로 사용) */
-export function tallyTreaty(room: Pick<Room, 'treaty'>) {
+/** 이번 라운드 공동 대응에 참여할 수 있는 나라와 성공에 필요한 나라 수 */
+export function projectInfo(room: Pick<Room, 'countries' | 'project'>) {
+  const def = room.project ? ROUNDS[room.project.round].project! : null;
+  const eligible = def ? aliveIds(room).filter((id) => !def.victims?.includes(id)) : [];
+  return { def, eligible, need: def ? Math.max(1, Math.min(def.need, eligible.length)) : 0 };
+}
+
+/** 협약 조항별 찬성 수와 채택 여부. 살아 있는 나라의 과반이 찬성해야 조항이 합의됨 */
+export function tallyTreaty(room: Pick<Room, 'treaty' | 'countries'>) {
   const t = room.treaty;
+  const voters = aliveIds(room);
+  const needVotes = Math.floor(voters.length / 2) + 1;
   const yes: Record<string, CountryId[]> = {};
   const clauses: Record<string, boolean> = {};
   for (const cl of CLAUSES) {
-    yes[cl.id] = COUNTRY_IDS.filter((id) => t?.votes[id]?.[cl.id] === true);
-    clauses[cl.id] = yes[cl.id].length >= TREATY_RULES.clauseVotes;
+    yes[cl.id] = voters.filter((id) => t?.votes[id]?.[cl.id] === true);
+    clauses[cl.id] = yes[cl.id].length >= needVotes;
   }
   const included = Object.values(clauses).filter(Boolean).length;
-  return { yes, clauses, included, adopted: included >= TREATY_RULES.minClauses };
-}
-
-export function isSurviving(c: CountryState, finalRound = TOTAL_ROUNDS): boolean {
-  return c.happy >= SURVIVAL_HAPPY && (c.shortages[finalRound]?.length ?? 0) === 0;
+  return { yes, clauses, included, needVotes, voters: voters.length, adopted: included >= TREATY_RULES.minClauses };
 }
 
 export function calcResults(room: Room): Results {
+  const order = ranking(room);
   const countries = {} as Results['countries'];
   for (const id of COUNTRY_IDS) {
     const c = room.countries[id];
-    const shortageCount = Object.values(c.shortages).reduce((s, a) => s + a.length, 0);
-    const survival = Math.max(0, 25 - 5 * shortageCount);
-    const happy = Math.round(c.happy * 0.25);
-    const env = Math.round(c.env * 0.25);
-    const trust = Math.round(c.trust * 0.25);
-    countries[id] = { survival, happy, env, trust, total: survival + happy + env + trust, survived: isSurviving(c), shortageCount };
+    countries[id] = {
+      rank: order.indexOf(id) + 1, lives: c.lives, diedRound: c.diedRound, env: c.env, trust: c.trust, eco: c.stock.eco,
+      score: countryScore(c), shortageCount: Object.values(c.shortages).filter((a) => a.length).length,
+    };
   }
-  const p = calcPeace(room);
-  const hs0 = COUNTRY_IDS.map((id) => COUNTRIES[id].happy);
-  const survivors = COUNTRY_IDS.filter((id) => countries[id].survived).length;
   const tr = room.treaty?.result;
-  const outcome: Results['outcome'] = survivors === 6 && p.value >= WIN_PEACE ? 'win' : survivors >= 4 && p.value >= 55 ? 'partial' : 'crisis';
+  const disputePeace = room.agreements.some((a) => a.title === '미르강 공동 관리 협정');
   return {
+    ranking: order,
     countries,
     world: {
-      peace: p.value, peaceStart: room.peaceHistory[0]?.value ?? p.value,
-      gapStart: Math.max(...hs0) - Math.min(...hs0), gapEnd: p.gap,
+      peace: calcPeace(room).value, peaceStart: room.peaceHistory[0]?.value ?? 0,
       projects: Object.values(room.projectResults).filter((x) => x.success).length,
       reliefSuccess: !!room.projectResults.relief?.success,
-      disputePeace: room.dispute?.result === 'peace' || room.agreements.some((a) => a.title === '미르강 공동 관리 협정'),
+      disputePeace,
+      dispute: disputePeace ? 'peace' : room.log.some((l) => l.type === 'dispute' && l.round === 3) ? 'failed' : 'none',
       treatyAdopted: !!tr?.adopted, treatyClauses: tr?.adopted ? Object.values(tr.clauses).filter(Boolean).length : 0,
-      survivors,
+      survivors: aliveIds(room).length,
     },
-    outcome,
   };
 }
 
@@ -159,7 +172,7 @@ function addAgreement(room: Room, title: string, parties: CountryId[], text: str
   room.agreements.push({ id: `a${++room.seq}`, round: room.round, title, parties, text });
 }
 function refreshPeace(room: Room) { room.peace = calcPeace(room).value; }
-function idx(c: CountryState, k: 'happy' | 'env' | 'trust', v: number) { c[k] = clamp(c[k] + v); }
+function idx(c: CountryState, k: 'env' | 'trust', v: number) { c[k] = clamp(c[k] + v); }
 function gain(c: CountryState, k: Res, v: number) { c.stock[k] = Math.max(0, Math.round(c.stock[k] + v)); }
 
 function cleanBundle(raw: unknown): ResBundle {
@@ -188,6 +201,12 @@ function requireDelegate(room: Room, ctx: Ctx): CountryState {
   need(c.delegate === ctx.pid, '이 행동은 국가 대표만 실행할 수 있습니다. 대표에게 의견을 전달하세요.');
   return c;
 }
+/** 살아 있는 나라의 대표만 */
+function requireActive(room: Room, ctx: Ctx): CountryState {
+  const c = requireDelegate(room, ctx);
+  need(c.diedRound === null, '멸망한 나라는 국제 구호단으로만 활동할 수 있습니다.');
+  return c;
+}
 function requireTeacher(ctx: Ctx) { need(ctx.teacher, '교사 권한이 필요합니다.'); }
 
 // ───────────────────────── 라운드 진행 ─────────────────────────
@@ -202,15 +221,18 @@ function beginRound(room: Room, n: number, now: number) {
   for (const id of COUNTRY_IDS) {
     const c = room.countries[id];
     c.policy = null;
+    c.reliefDone = false;
     c.roundTrust = { trade: 0, aid: 0 };
     c.hubBonus = 0;
+    if (c.diedRound !== null) continue;
+    if (n > 1) c.prod.eco += COUNTRIES[id].growth;
     for (const k of RES) c.stock[k] += Math.round(c.prod[k] * (def.prodMult[k] ?? 1));
   }
   addNews(room, now, def.headline, def.body, n === 5 ? 'info' : 'bad');
   addLog(room, now, 'event', `ROUND ${n} 시작 — ${def.crisis}`);
 
-  // 정기 이행 협정 (미르강 공동 관리 협정)
-  for (const rc of room.recurring.filter((x) => x.until >= n)) {
+  // 정기 이행 협정 (미르강 공동 관리 협정) — 두 나라가 모두 살아 있을 때만
+  for (const rc of room.recurring.filter((x) => x.until >= n && isAlive(room, x.from) && isAlive(room, x.to))) {
     const from = room.countries[rc.from], to = room.countries[rc.to];
     const amt = Math.min(rc.amt, from.stock[rc.res]);
     from.stock[rc.res] -= amt;
@@ -218,8 +240,15 @@ function beginRound(room: Room, n: number, now: number) {
     addLog(room, now, 'dispute', `${rc.label}: ${cname(rc.from)} → ${cname(rc.to)} ${RES_INFO[rc.res].name} ${amt}`);
   }
 
-  if (def.project) room.project = { round: n, id: def.project.id, joined: [] };
-  if (n === 3) room.dispute = { parties: DISPUTE_PARTIES, stances: {}, mediators: [] };
+  if (def.project) {
+    const victimsAlive = !def.project.victims || def.project.victims.some((id) => isAlive(room, id));
+    const donors = aliveIds(room).filter((id) => !def.project!.victims?.includes(id));
+    if (victimsAlive && donors.length) room.project = { round: n, id: def.project.id, joined: [] };
+  }
+  if (n === 3) {
+    if (DISPUTE_PARTIES.every((id) => isAlive(room, id))) room.dispute = { parties: DISPUTE_PARTIES, stances: {}, mediators: [] };
+    else addNews(room, now, '미르강 분쟁 소멸', '분쟁 당사국 가운데 멸망한 나라가 있어 분쟁이 일어나지 않았습니다.', 'info');
+  }
   if (n === 4) applyDisaster(room, now);
   if (n === 5) room.treaty = { votes: {} };
   refreshPeace(room);
@@ -229,14 +258,14 @@ function applyDisaster(room: Room, now: number) {
   const e = avgEnv(room);
   const sev = e < 45 ? 1.3 : e >= 60 ? 0.8 : 1;
   room.severity = sev;
-  const hit = (id: CountryId, d: { food: number; water: number; eco: number; happy: number }) => {
+  const hit = (id: CountryId, d: { food: number; water: number; eco: number }) => {
+    if (!isAlive(room, id)) return;
     const c = room.countries[id];
     gain(c, 'food', -d.food * sev); gain(c, 'water', -d.water * sev); gain(c, 'eco', -d.eco * sev);
-    idx(c, 'happy', -d.happy * sev);
     addLog(room, now, 'event', `${cname(id)} 재난 피해 (피해 배율 ×${sev})`, id);
   };
-  hit('OCE', { food: 8, water: 6, eco: 8, happy: 10 });
-  hit('NOV', { food: 5, water: 0, eco: 4, happy: 5 });
+  hit('OCE', { food: 8, water: 6, eco: 8 });
+  hit('NOV', { food: 5, water: 3, eco: 4 });
   const txt = sev > 1 ? '세계 환경 지수가 낮아 재난 피해가 30% 커졌습니다.' : sev < 1 ? '각국이 환경을 지킨 덕분에 재난 피해가 20% 줄었습니다.' : '세계 환경 지수가 보통 수준이어서 피해 규모는 예측대로였습니다.';
   addNews(room, now, '재난 피해 규모 발표', txt, sev > 1 ? 'bad' : 'info');
 }
@@ -248,72 +277,74 @@ function endRound(room: Room, now: number) {
   if (n === 3) resolveDispute(room, now);
   if (n === 5) resolveTreaty(room, now);
 
-  // 소비와 부족 판정
-  for (const id of COUNTRY_IDS) {
+  // 소비와 부족 판정: 필수 자원이 하나라도 모자라면 목숨 −1, 0이 되면 멸망
+  const hurt: CountryId[] = [], fallen: CountryId[] = [];
+  for (const id of aliveIds(room)) {
     const c = room.countries[id];
     const short: Vital[] = [];
     for (const k of VITALS) {
       if (c.stock[k] >= c.need[k]) c.stock[k] -= c.need[k];
-      else {
-        const lack = c.need[k] - c.stock[k];
-        c.stock[k] = 0;
-        short.push(k);
-        idx(c, 'happy', -Math.min(12, Math.ceil(lack * 1.5)));
-      }
+      else { c.stock[k] = 0; short.push(k); }
     }
     c.shortages[n] = short;
-    if (short.length === 0) idx(c, 'happy', 1);
-    else addLog(room, now, 'system', `${cname(id)}: ${short.map((k) => RES_INFO[k].name).join('·')} 부족으로 국민 행복도 하락`, id);
+    if (short.length) {
+      c.lives -= 1;
+      hurt.push(id);
+      const what = short.map((k) => RES_INFO[k].name).join('·');
+      if (c.lives <= 0) {
+        c.lives = 0; c.diedRound = n; fallen.push(id);
+        addLog(room, now, 'system', `${cname(id)} 멸망 — ${what} 부족. 다음 라운드부터 국제 구호단이 됩니다.`, id);
+      } else addLog(room, now, 'system', `${cname(id)}: ${what} 부족으로 목숨 −1 (남은 목숨 ${c.lives})`, id);
+    }
     idx(c, 'env', COUNTRIES[id].envDrift);
-    if (c.env < 30) idx(c, 'happy', -3);
   }
   if (avgEnv(room) < 45) {
-    for (const id of COUNTRY_IDS) idx(room.countries[id], 'happy', -2);
-    addNews(room, now, '기후 악화 경고', '세계 평균 환경 지수가 45 아래로 떨어져 모든 나라의 행복도가 2 하락했습니다.', 'bad');
+    for (const id of aliveIds(room)) { gain(room.countries[id], 'food', -3); gain(room.countries[id], 'water', -3); }
+    addNews(room, now, '기후 악화 경고', '세계 평균 환경 지수가 45 아래로 떨어져 살아 있는 모든 나라가 식량·물을 3씩 잃었습니다.', 'bad');
   }
-  const shortList = COUNTRY_IDS.filter((id) => room.countries[id].shortages[n].length > 0);
-  if (shortList.length) addNews(room, now, `ROUND ${n} 결산: ${shortList.length}개국 자원 부족`, `${shortList.map(cname).join(', ')}에서 필수 자원이 부족했습니다.`, 'bad');
-  else addNews(room, now, `ROUND ${n} 결산: 모든 나라가 필수 자원 확보`, '어떤 나라도 식량·물·에너지가 부족하지 않았습니다.', 'good');
+  if (fallen.length) addNews(room, now, `ROUND ${n} 결산: ${fallen.map(cname).join(', ')} 멸망`, '필수 자원을 채우지 못해 마지막 목숨을 잃었습니다. 멸망한 나라는 국제 구호단이 되어 다른 나라를 돕습니다.', 'bad');
+  const onlyHurt = hurt.filter((id) => !fallen.includes(id));
+  if (onlyHurt.length) addNews(room, now, `ROUND ${n} 결산: ${onlyHurt.map(cname).join(', ')} 목숨 −1`, '필수 자원이 모자랐습니다. 한 번 더 모자라면 멸망합니다.', 'bad');
+  if (!hurt.length) addNews(room, now, `ROUND ${n} 결산: 모든 나라가 자원 확보`, '이번 라운드에는 목숨을 잃은 나라가 없습니다.', 'good');
 
   for (const id of COUNTRY_IDS) {
     const c = room.countries[id];
-    c.history.push({ round: n, stock: { ...c.stock }, happy: c.happy, env: c.env, trust: c.trust, shortages: c.shortages[n] });
+    c.history.push({ round: n, stock: { ...c.stock }, lives: c.lives, env: c.env, trust: c.trust, shortages: c.shortages[n] ?? [] });
   }
   refreshPeace(room);
   room.peaceHistory.push({ round: n, label: `R${n}`, value: room.peace });
   room.endsAt = null;
   room.remainingMs = null;
-  addLog(room, now, 'system', `ROUND ${n} 종료 — 세계 평화 지수 ${room.peace}`);
+  addLog(room, now, 'system', `ROUND ${n} 종료 — 살아남은 나라 ${aliveIds(room).length}개`);
   if (n >= TOTAL_ROUNDS) {
     room.phase = 'finished';
     room.results = calcResults(room);
-    const o = room.results.outcome;
-    addNews(room, now, o === 'win' ? '세계 공동 승리!' : o === 'partial' ? '절반의 성공' : '위기는 계속된다',
-      o === 'win' ? '모든 나라가 생존 조건을 달성했고 세계 평화 지수가 기준을 넘었습니다.' : '결과 화면에서 무엇이 부족했는지 함께 살펴보세요.', o === 'win' ? 'good' : 'info');
+    const first = room.results.ranking[0];
+    addNews(room, now, `최종 1위: ${COUNTRIES[first].name}`, `살아남은 나라 ${room.results.world.survivors}개. 결과 화면에서 각 나라가 왜 그런 결과를 얻었는지 살펴보세요.`, 'info');
   } else room.phase = 'roundEnd';
 }
 
 function resolveProject(room: Room, now: number) {
   const pr = room.project;
   if (!pr) return;
-  const def = ROUNDS[pr.round].project!;
-  pr.success = pr.joined.length >= def.need;
+  const { def, need: needN } = projectInfo(room);
+  if (!def) return;
+  pr.success = pr.joined.length >= needN;
   if (pr.id === 'relief') {
-    // 모인 돈은 성공 여부와 관계없이 피해국에 전달
+    // 모인 돈은 성공 여부와 관계없이 살아 있는 피해국에 나누어 전달
+    const victims = def.victims!.filter((id) => isAlive(room, id));
     const pool = pr.joined.length * def.cost;
-    const toOce = Math.round(pool * 0.6);
-    room.countries.OCE.stock.eco += toOce;
-    room.countries.NOV.stock.eco += pool - toOce;
-    if (pr.success) { idx(room.countries.OCE, 'happy', 6); idx(room.countries.NOV, 'happy', 6); }
+    victims.forEach((id, i) => { room.countries[id].stock.eco += i === 0 ? Math.ceil(pool / victims.length) : Math.floor(pool / victims.length); });
+    if (pr.success) for (const id of victims) { room.countries[id].stock.food += 4; room.countries[id].stock.water += 4; }
   }
   const who = pr.joined.map(cname).join(', ') || '없음';
   if (pr.success) {
-    if (pr.id === 'water') for (const id of COUNTRY_IDS) room.countries[id].prod.water += 2;
-    if (pr.id === 'energy') for (const id of COUNTRY_IDS) { room.countries[id].prod.energy += 2; idx(room.countries[id], 'env', 3); }
+    if (pr.id === 'water') for (const id of aliveIds(room)) room.countries[id].prod.water += 2;
+    if (pr.id === 'energy') for (const id of aliveIds(room)) { room.countries[id].prod.energy += 2; idx(room.countries[id], 'env', 3); }
     addNews(room, now, `${def.name} 성공!`, `${def.success}. 참여국: ${who}`, 'good');
     addAgreement(room, def.name, pr.joined, `${pr.joined.length}개국 참여 — ${def.success}`);
   } else {
-    addNews(room, now, `${def.name} 실패`, `${def.need}개국이 필요했지만 ${pr.joined.length}개국만 참여했습니다.${pr.id === 'relief' ? ' 모인 돈만 피해국에 전달되었습니다.' : ' 낸 돈은 돌려받지 못합니다.'}`, 'bad');
+    addNews(room, now, `${def.name} 실패`, `${needN}개국이 필요했지만 ${pr.joined.length}개국만 참여했습니다.${pr.id === 'relief' ? ' 모인 돈만 피해국에 전달되었습니다.' : ' 낸 돈은 돌려받지 못합니다.'}`, 'bad');
   }
   addLog(room, now, 'project', `${def.name}: ${pr.joined.length}개국 참여(${who}) — ${pr.success ? '성공' : '실패'}`);
   room.projectResults[pr.id] = { joined: pr.joined.length, success: pr.success };
@@ -329,12 +360,12 @@ function resolveDispute(room: Room, now: number) {
   const med = d.mediators.length;
   if (!sa || !sb) {
     d.result = 'unresolved';
-    for (const c of [A, B]) { idx(c, 'trust', -5); idx(c, 'happy', -3); }
-    d.resultText = '두 나라가 입장을 정하지 못해 분쟁이 해결되지 않았습니다. 양국 신뢰도 −5, 행복도 −3.';
+    for (const c of [A, B]) idx(c, 'trust', -5);
+    d.resultText = '두 나라가 입장을 정하지 못해 분쟁이 해결되지 않았습니다. 양국 신뢰도 −5.';
     addNews(room, now, '미르강 분쟁 미해결', d.resultText, 'bad');
   } else if (sa !== 'unilateral' && sb !== 'unilateral') {
     d.result = 'peace';
-    for (const c of [A, B]) { idx(c, 'trust', 8); idx(c, 'happy', 3); }
+    for (const c of [A, B]) idx(c, 'trust', 8);
     room.recurring.push({ from: 'GRN', to: 'SOL', res: 'water', amt: 4, until: 5, label: '미르강 공동 관리 협정' });
     room.recurring.push({ from: 'SOL', to: 'GRN', res: 'energy', amt: 4, until: 5, label: '미르강 공동 관리 협정' });
     if (med >= 2) for (const m of d.mediators) idx(room.countries[m], 'trust', 2);
@@ -343,16 +374,16 @@ function resolveDispute(room: Room, now: number) {
     addNews(room, now, '미르강 분쟁, 평화적 해결', d.resultText, 'good');
   } else if (sa === 'unilateral' && sb === 'unilateral') {
     d.result = 'both';
-    for (const c of [A, B]) { idx(c, 'trust', -15); idx(c, 'happy', -5); gain(c, 'water', -4); }
-    d.resultText = '두 나라 모두 혼자 밀어붙여 갈등이 커졌습니다. 양국 신뢰도 −15, 행복도 −5, 물 −4.';
+    for (const c of [A, B]) { idx(c, 'trust', -15); gain(c, 'water', -6); }
+    d.resultText = '두 나라 모두 혼자 밀어붙여 갈등이 커졌습니다. 양국 신뢰도 −15, 물 −6.';
     addNews(room, now, '미르강 분쟁 격화', d.resultText, 'bad');
   } else {
     d.result = 'one';
     const [actor, victim] = sa === 'unilateral' ? [A, B] : [B, A];
-    const soften = med >= 2 ? 0.5 : 1;
+    const loss = med >= 2 ? 3 : 6;
     gain(actor, 'water', 10); idx(actor, 'trust', -15);
-    idx(victim, 'happy', -6 * soften); gain(victim, 'water', -6 * soften); idx(victim, 'trust', 3);
-    d.resultText = `${cname(actor.id)}가 혼자 밀어붙였습니다. ${cname(actor.id)} 물 +10·신뢰도 −15, ${cname(victim.id)} 행복도·물 피해${med >= 2 ? ' (중재국들의 조정으로 피해 절반)' : ''}.`;
+    gain(victim, 'water', -loss); idx(victim, 'trust', 3);
+    d.resultText = `${cname(actor.id)}가 혼자 밀어붙였습니다. ${cname(actor.id)} 물 +10·신뢰도 −15, ${cname(victim.id)} 물 −${loss}${med >= 2 ? ' (중재국들의 조정으로 피해 절반)' : ''}.`;
     addNews(room, now, '미르강 분쟁, 일방적 조치로 얼룩', d.resultText, 'bad');
   }
   addLog(room, now, 'dispute', d.resultText!);
@@ -364,7 +395,7 @@ function resolveTreaty(room: Room, now: number) {
   const tally = tallyTreaty(room);
   t.result = { adopted: tally.adopted, clauses: tally.clauses };
   if (!tally.adopted) {
-    for (const id of COUNTRY_IDS) idx(room.countries[id], 'trust', -3);
+    for (const id of aliveIds(room)) idx(room.countries[id], 'trust', -3);
     addNews(room, now, '세계 평화 협약 채택 무산', `합의된 조항이 ${tally.included}개뿐이어서 협약이 채택되지 못했습니다. 모든 나라 신뢰도 −3.`, 'bad');
     addLog(room, now, 'treaty', `세계 평화 협약 무산 (합의 조항 ${tally.included}개)`);
     return;
@@ -374,19 +405,20 @@ function resolveTreaty(room: Room, now: number) {
   for (const c of on('climate')) { gain(c, 'eco', -3); idx(c, 'env', 5); }
   for (const c of on('coop')) for (const k of VITALS) gain(c, k, 2);
   for (const c of on('peace')) idx(c, 'trust', 4);
-  for (const c of on('sdg')) { gain(c, 'eco', -2); idx(c, 'happy', 3); idx(c, 'env', 2); }
+  for (const c of on('sdg')) { gain(c, 'eco', -2); idx(c, 'env', 2); idx(c, 'trust', 2); }
   const sup = on('support');
   if (sup.length) {
     const donors = sup.filter((c) => c.id !== 'NOV' && c.id !== 'OCE').sort((x, y) => y.stock.eco - x.stock.eco).slice(0, 3);
-    let pool = 0;
-    for (const c of donors) { const v = Math.min(4, c.stock.eco); c.stock.eco -= v; pool += v; }
-    room.countries.OCE.stock.eco += Math.ceil(pool / 2);
-    room.countries.NOV.stock.eco += Math.floor(pool / 2);
-    idx(room.countries.OCE, 'happy', 3); idx(room.countries.NOV, 'happy', 3);
+    const rec = (['OCE', 'NOV'] as CountryId[]).filter((id) => isAlive(room, id));
+    if (rec.length) {
+      let pool = 0;
+      for (const c of donors) { const v = Math.min(4, c.stock.eco); c.stock.eco -= v; pool += v; idx(c, 'trust', 2); }
+      rec.forEach((id, i) => { room.countries[id].stock.eco += i === 0 ? Math.ceil(pool / rec.length) : Math.floor(pool / rec.length); });
+    }
   }
   for (const cl of CLAUSES) if (tally.clauses[cl.id]) for (const id of tally.yes[cl.id]) idx(room.countries[id], 'trust', 2);
   const names = CLAUSES.filter((c) => tally.clauses[c.id]).map((c) => c.name).join(', ');
-  const parties = COUNTRY_IDS.filter((id) => CLAUSES.some((cl) => tally.clauses[cl.id] && tally.yes[cl.id].includes(id)));
+  const parties = aliveIds(room).filter((id) => CLAUSES.some((cl) => tally.clauses[cl.id] && tally.yes[cl.id].includes(id)));
   addAgreement(room, '세계 평화 협약', parties, `채택 조항 ${tally.included}개: ${names}`);
   addNews(room, now, '세계 평화 협약 채택!', `채택 조항 ${tally.included}개: ${names}`, 'good');
   addLog(room, now, 'treaty', `세계 평화 협약 채택 — ${names}`);
@@ -399,6 +431,7 @@ function needy(c: CountryState, k: Res): boolean {
 
 function executeTrade(room: Room, p: Proposal, now: number) {
   const from = room.countries[p.from], to = room.countries[p.to];
+  need(from.diedRound === null && to.diedRound === null, '멸망한 나라와는 거래할 수 없습니다.');
   need(canPay(from, p.give), `${cname(p.from)}의 자원이 부족해 거래를 체결할 수 없습니다.`);
   need(canPay(to, p.take), `${cname(p.to)}의 자원이 부족해 거래를 체결할 수 없습니다.`);
   const gSum = bundleSum(p.give), tSum = bundleSum(p.take);
@@ -477,11 +510,11 @@ export const commands: Record<string, Cmd> = {
     requireTeacher(ctx);
     need(room.phase === 'running' || room.phase === 'paused', '라운드 진행 중에만 사건을 발동할 수 있습니다.');
     const ev = TEACHER_EVENTS.find((e) => e.id === a.id) ?? fail('알 수 없는 사건입니다.');
-    const all = COUNTRY_IDS.map((id) => room.countries[id]);
-    if (ev.id === 'pandemic') for (const c of all) { idx(c, 'happy', -3); gain(c, 'eco', -3); }
+    const all = aliveIds(room).map((id) => room.countries[id]);
+    if (ev.id === 'pandemic') for (const c of all) gain(c, 'eco', -4);
     if (ev.id === 'harvest') for (const c of all) gain(c, 'food', 4);
     if (ev.id === 'oilshock') for (const c of all) if (c.id !== 'SOL') gain(c, 'energy', -3);
-    if (ev.id === 'devconf') { gain(room.countries.NOV, 'eco', 6); for (const c of all) idx(c, 'trust', 1); }
+    if (ev.id === 'devconf') { if (isAlive(room, 'NOV')) gain(room.countries.NOV, 'eco', 6); for (const c of all) idx(c, 'trust', 1); }
     if (ev.id === 'peaceday') for (const c of all) idx(c, 'trust', 2);
     addNews(room, ctx.now, `[국제 사건] ${ev.title}`, `${ev.body} (게임 속 가상 사건)`, ev.tone);
     addLog(room, ctx.now, 'event', `교사 발동 사건: ${ev.title}`);
@@ -509,7 +542,11 @@ export const commands: Record<string, Cmd> = {
     const delta = Number(a.delta);
     need(Number.isInteger(delta) && Math.abs(delta) <= 100, '조정 값이 올바르지 않습니다.');
     if ((RES as string[]).includes(key)) gain(c, key as Res, delta);
-    else if (['happy', 'env', 'trust'].includes(key)) idx(c, key as 'happy', delta);
+    else if (['env', 'trust'].includes(key)) idx(c, key as 'env', delta);
+    else if (key === 'lives') {
+      c.lives = Math.max(0, Math.min(START_LIVES, c.lives + delta));
+      if (c.lives > 0) c.diedRound = null; else if (c.diedRound === null) c.diedRound = Math.max(1, room.round);
+    }
     else fail('조정할 항목이 올바르지 않습니다.');
     addLog(room, ctx.now, 'teacher', `교사 수동 조정: ${cname(c.id)} ${key} ${delta > 0 ? '+' : ''}${delta}`, c.id);
     refreshPeace(room);
@@ -539,7 +576,7 @@ export const commands: Record<string, Cmd> = {
   // ── 학생: 정책 카드 (라운드마다 1장) ──
   policy(room, ctx, a) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     const def = POLICIES.find((x) => x.id === a.id) ?? fail('알 수 없는 정책 카드입니다.');
     need(!c.policy, '이번 라운드의 정책 카드는 이미 골랐습니다. (라운드마다 1장)');
     need(c.stock.eco >= def.cost, `돈이 부족합니다. (${def.cost} 필요)`);
@@ -556,10 +593,6 @@ export const commands: Record<string, Cmd> = {
         result = `${RES_INFO[pick!].name} 생산 +${v}${c.id === 'ARC' ? '' : ', 환경 −3'}`; break;
       }
       case 'green': idx(c, 'env', 8); result = '환경 +8'; break;
-      case 'welfare':
-        idx(c, 'happy', 4); result = '행복도 +4';
-        if (c.id === 'NOV') { c.prod.eco += 2; result += ', 매 라운드 돈 +2'; }
-        break;
       case 'emergency': c.stock[pick!] += 5; result = `${RES_INFO[pick!].name} +5`; break;
     }
     addLog(room, ctx.now, 'action', `정책 「${def.name}」${pick ? `(${RES_INFO[pick].name})` : ''} — ${result}`, c.id);
@@ -569,7 +602,7 @@ export const commands: Record<string, Cmd> = {
   // ── 학생: 사건 카드 — 공동 대응 참여 (1·2·4라운드) ──
   joinProject(room, ctx) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     const pr = room.project ?? fail('이번 라운드에는 공동 대응이 없습니다.');
     const def = ROUNDS[pr.round].project!;
     need(!def.victims?.includes(c.id), '피해를 입은 나라는 도움을 받는 쪽입니다.');
@@ -578,15 +611,16 @@ export const commands: Record<string, Cmd> = {
     c.stock.eco -= def.cost;
     pr.joined.push(c.id);
     idx(c, 'trust', pr.id === 'relief' ? 4 : 3);
-    addLog(room, ctx.now, 'project', `${def.name} 참여 (돈 ${def.cost}) — ${pr.joined.length}/${def.need}개국`, c.id);
+    addLog(room, ctx.now, 'project', `${def.name} 참여 (돈 ${def.cost}) — ${pr.joined.length}/${projectInfo(room).need}개국`, c.id);
     refreshPeace(room);
   },
 
   // ── 학생: 외교 (자원 거래·지원) ──
   propose(room, ctx, a) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     need(isCountry(a.to) && a.to !== c.id, '상대 국가를 선택하세요.');
+    need(isAlive(room, a.to as CountryId), '멸망한 나라와는 거래할 수 없습니다.');
     need(room.proposals.filter((p) => p.from === c.id && p.status === 'pending').length < 5, '대기 중인 제안이 너무 많습니다. (최대 5건) 기존 제안을 취소하세요.');
     const memo = String(a.memo ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const give = cleanBundle(a.give), take = cleanBundle(a.take);
@@ -598,7 +632,7 @@ export const commands: Record<string, Cmd> = {
   },
   respond(room, ctx, a) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     const p = room.proposals.find((x) => x.id === a.id) ?? fail('제안을 찾을 수 없습니다.');
     need(p.status === 'pending', '이미 처리된 제안입니다.');
     need(p.round === room.round, '지난 라운드의 제안입니다.');
@@ -622,7 +656,7 @@ export const commands: Record<string, Cmd> = {
   // ── 학생: 사건 카드 — 3라운드 분쟁 ──
   stance(room, ctx, a) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     const d = room.dispute ?? fail('지금은 분쟁 상황이 아닙니다.');
     need(d.parties.includes(c.id), '분쟁 당사국만 입장을 정할 수 있습니다.');
     need(!d.stances[c.id], '이미 입장을 확정했습니다.');
@@ -633,7 +667,7 @@ export const commands: Record<string, Cmd> = {
   },
   mediate(room, ctx) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     const d = room.dispute ?? fail('지금은 분쟁 상황이 아닙니다.');
     need(!d.parties.includes(c.id), '당사국은 중재국이 될 수 없습니다.');
     need(!d.mediators.includes(c.id), '이미 중재에 참여했습니다.');
@@ -646,11 +680,25 @@ export const commands: Record<string, Cmd> = {
   // ── 학생: 사건 카드 — 5라운드 협약 투표 ──
   treatyVote(room, ctx, a) {
     requireRunning(room, ctx.now);
-    const c = requireDelegate(room, ctx);
+    const c = requireActive(room, ctx);
     const t = room.treaty ?? fail('협약은 5라운드에 논의합니다.');
     need(CLAUSES.some((cl) => cl.id === a.clause), '조항을 찾을 수 없습니다.');
     need(typeof a.yes === 'boolean', '찬성 또는 반대를 선택하세요.');
     (t.votes[c.id] ??= {})[String(a.clause)] = a.yes as boolean;
+  },
+
+  // ── 멸망한 나라: 국제 구호단 — 라운드마다 살아 있는 한 나라에 자원 지원 ──
+  relief(room, ctx, a) {
+    requireRunning(room, ctx.now);
+    const c = requireDelegate(room, ctx);
+    need(c.diedRound !== null, '국제 구호단(멸망한 나라)만 할 수 있습니다.');
+    need(!c.reliefDone, '이번 라운드의 구호 지원은 이미 보냈습니다. (라운드마다 한 번)');
+    need(isCountry(a.to) && isAlive(room, a.to as CountryId), '살아 있는 나라를 고르세요.');
+    const res = VITALS.find((k) => k === a.res) ?? fail('지원할 자원을 고르세요.');
+    c.reliefDone = true;
+    room.countries[a.to as CountryId].stock[res] += RELIEF_AMOUNT;
+    addLog(room, ctx.now, 'relief', `국제 구호단(${cname(c.id)}) → ${cname(a.to as CountryId)}: ${RES_INFO[res].name} ${RELIEF_AMOUNT} 지원`, c.id);
+    addNews(room, ctx.now, `국제 구호단, ${cname(a.to as CountryId)}에 ${RES_INFO[res].name} 지원`, `멸망한 ${cname(c.id)}의 대표단이 구호단으로서 ${RES_INFO[res].name} ${RELIEF_AMOUNT}을(를) 전달했습니다.`, 'good');
   },
 
   // ── 학생: 퀴즈·성찰 (모든 참가자) ──
@@ -668,7 +716,7 @@ export const commands: Record<string, Cmd> = {
     if (choice === QUIZZES[rd]?.answer) {
       st.correct++;
       const c = room.countries[ctx.country!];
-      if (!c.quizBonus.includes(rd) && room.phase === 'running') {
+      if (!c.quizBonus.includes(rd) && room.phase === 'running' && c.diedRound === null) {
         c.quizBonus.push(rd);
         c.stock.eco += 3;
         addLog(room, ctx.now, 'system', `퀴즈 정답 보너스: 돈 +3`, c.id);
