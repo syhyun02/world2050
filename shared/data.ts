@@ -55,7 +55,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '기술력 · 자본 · 연구 능력', weakness: '에너지 수입 의존',
     goal: '안정적인 에너지 공급망 확보', topics: '기술 격차, 에너지 안보',
     perk: '첨단 기술: 「긴급 구입」을 반값(돈 3)에 쓸 수 있음',
-    stock: r(28, 2, 4, 6), prod: r(13, 8, 8, 6), need: { food: 8, water: 8, energy: 12 },
+    stock: r(28, 2, 4, 8), prod: r(13, 8, 8, 6), need: { food: 8, water: 8, energy: 14 },
     env: 55, trust: 55, growth: 0, envDrift: 0, map: { x: 215, y: 150 },
   },
   SOL: {
@@ -64,7 +64,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '풍부한 에너지 자원', weakness: '물 부족',
     goal: '안정적인 수자원 확보', topics: '자원 외교, 자원의 저주',
     perk: '에너지 부국: 에너지가 크게 남지만 물이 모자람',
-    stock: r(18, 2, 8, 8), prod: r(7, 8, 3, 22), need: { food: 8, water: 10, energy: 8 },
+    stock: r(18, 2, 10, 8), prod: r(7, 8, 3, 24), need: { food: 8, water: 12, energy: 8 },
     env: 45, trust: 50, growth: 0, envDrift: 0, map: { x: 520, y: 330 },
   },
   GRN: {
@@ -73,7 +73,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '농업 생산력', weakness: '기후변화에 따른 식량 생산 불안정',
     goal: '농업기술과 기후 대응 지원 확보', topics: '식량 안보, 지속가능한 농업',
     perk: '세계의 곡창: 식량이 크게 남지만 에너지가 모자람',
-    stock: r(20, 2, 4, 5), prod: r(10, 15, 8, 5), need: { food: 8, water: 8, energy: 10 },
+    stock: r(20, 2, 4, 7), prod: r(10, 17, 8, 5), need: { food: 8, water: 8, energy: 12 },
     env: 70, trust: 55, growth: 0, envDrift: 0, map: { x: 470, y: 160 },
   },
   OCE: {
@@ -82,7 +82,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '해양자원 · 국제 해상 교역', weakness: '해수면 상승과 자연재해',
     goal: '기후 적응 지원과 국가 생존', topics: '기후정의, 인도적 지원',
     perk: '해상 교역 허브: 거래가 성사될 때마다 돈 +1 (라운드당 최대 +4)',
-    stock: r(18, 6, 3, 1), prod: r(9, 5, 11, 8), need: { food: 10, water: 8, energy: 8 },
+    stock: r(18, 8, 3, 1), prod: r(9, 5, 12, 8), need: { food: 12, water: 8, energy: 8 },
     env: 70, trust: 60, growth: 0, envDrift: 0, map: { x: 800, y: 370 },
   },
   IND: {
@@ -91,7 +91,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '제조업 · 산업 생산력', weakness: '높은 탄소배출량과 에너지 소비',
     goal: '산업 성장과 탄소 감축의 균형', topics: '탄소중립, 환경 협약',
     perk: '제조 강국: 「생산 늘리기」 효과가 +4이고 환경도 나빠지지 않음 (다른 나라는 +3, 환경 −3)',
-    stock: r(28, 2, 4, 6), prod: r(13, 10, 8, 6), need: { food: 10, water: 8, energy: 12 },
+    stock: r(28, 2, 4, 8), prod: r(13, 10, 8, 6), need: { food: 10, water: 8, energy: 14 },
     env: 30, trust: 50, growth: 0, envDrift: 0, map: { x: 770, y: 150 },
   },
   NOV: {
@@ -100,7 +100,7 @@ export const COUNTRIES: Record<CountryId, CountryDef> = {
     strength: '인적자원 · 성장 잠재력', weakness: '부족한 자본과 사회기반시설',
     goal: '개발 협력과 기반시설 확충', topics: '국제 원조, 개발 격차, 교육 불평등',
     perk: '성장 잠재력: 라운드가 지날 때마다 버는 돈이 +2씩 늘어남 (처음엔 가난하지만 갈수록 부유해짐)',
-    stock: r(18, 6, 3, 1), prod: r(7, 5, 9, 8), need: { food: 10, water: 8, energy: 8 },
+    stock: r(18, 8, 3, 1), prod: r(7, 5, 10, 8), need: { food: 12, water: 8, energy: 8 },
     env: 60, trust: 55, growth: 2, envDrift: 0, map: { x: 250, y: 370 },
   },
 };
